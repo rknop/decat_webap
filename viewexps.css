@@ -1,0 +1,10 @@
+table.maintable { border: 2px solid black; border-spacing: 2px }
+table.maintable th { border-bottom: 2px solid black; font-weight: bold }
+
+table.exposurelist { border: 2px solid black; border-spacing: 2px }
+table.exposurelist th { border-bottom: 2px solid black; font-weight: bold }
+table.exposurelist td { border: 2px solid black; border-spaccing: 2px; padding: 2px }
+img { image-rendering: optimizeSpeed }
+
+.good { font-weight: bold; color: #00c000; }
+.bad { font-weight: bold; color: #c00000; }
