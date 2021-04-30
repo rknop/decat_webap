@@ -1,0 +1,4 @@
+Options +ExecCGI
+SetEnv PROCESS_GROUP decatview
+AddHandler cgi-script .cgi
+AddHandler wsgi-script .py

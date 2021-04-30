@@ -7,6 +7,7 @@ import os
 import re
 import json
 import psycopg2
+import psycopg2.extras
 import base64
 from io import BytesIO
 import uuid
@@ -19,6 +20,17 @@ import numpy
 from web import form
 import PIL
 import PIL.Image
+
+# I want to find a way not to have to
+#   hardcode a path here.
+# web.ctx has the filename, but doesn't
+#   exist until an application's been called.
+if not "/var/www/raknop/decat/view" in sys.path:
+    sys.path.insert(0, "/var/www/raknop/decat/view")
+
+from webapconfig import webapfullurl, webapdir, webapdirurl, DBdata
+from util import dtohms, dtodms, radectolb, mjd
+
 # sys.stderr.write("About to import astropy\n")
 # s.environ["XDG_CONFIG_HOME"] = "/var/www/astropy"
 # os.environ["XDG_CACHE_HOME"] = "/var/www/astropy"
@@ -26,112 +38,7 @@ import PIL.Image
 # sys.stderr.write("Imported astropy\n")
 # import fitsio
 
-
-webapfullurl = "https://c3.lbl.gov/raknop/viewexps.py"
-webapdir = "/var/www/raknop"
-DBdata = "/home/raknop/secret/dbinfo.txt"
-rightpassword = "Lambdaneq0"
-
-# ======================================================================
-
-def sanitizeHTML(text, oneline = False):
-    tagfinder = re.compile("^\<(\S+)\>$")
-    ampfinder = re.compile("\&([^;\s]*\s)")
-    ampendfinder = re.compile("\&([^;\s]*)$")
-    ltfinder = re.compile("<((?!a\s*href)[^>]*\s)")
-    ltendfinder = re.compile("<([^>]*)$")
-    gtfinder = re.compile("((?<!\<a)\s[^<]*)>")
-    gtstartfinder = re.compile("^([<]*)>");
-    
-    def tagfilter(text):
-        tagfinder = re.compile("^\<(\S+)\>$")
-        # linkfinder = re.compile("^\s*a\s+\"[^\"]+\"\s*")     # I think this didn't work
-        linkfinder = re.compile("^\s*a\s+href\s*=\s*\"[^\"]+\"\s*((target|style)\s*=\s*\"[^\"]*\"\s*)*")
-        imgfinder = re.compile("^\s*img\s+((src|style|width|height|alt)\s*=\s*\"[^\"]*\"\s*)*$")
-        match = tagfinder.match(text)
-        if match is None:
-            return None
-        contents = match.group(1)
-        if linkfinder.match(contents) is not None:
-            return text
-        if imgfinder.match(contents) is not None:
-            return text
-        if ( (contents.lower() == "i") or (contents.lower() == "b") or (contents.lower() == "tt") ):
-            return text
-        elif ( (contents.lower() == "/i") or (contents.lower() == "/b") or
-               (contents.lower() == "/tt") or (contents.lower() == "/a") ):
-            return text
-        elif contents.lower() == "sup":
-            return "<span class=\"sup\">"
-        elif contents.lower() == "/sup":
-            return "</span>"
-        elif contents.lower() == "sub":
-            return "<span class=\"sub\">"
-        elif contents.lower() == "/sub":
-            return "</span>"
-        else:
-            return "&lt;{}&rt;".format(contents)
-
-    newtext = tagfinder.sub(tagfilter, text)
-    newtext = ampfinder.sub("&amp;\g<1>", newtext, count=0)
-    newtext = ampendfinder.sub("&amp;\g<1>", newtext, count=0)
-    newtext = ltfinder.sub("&lt;\g<1>", newtext, count=0)
-    newtext = ltendfinder.sub("&lt;\g<1>", newtext, count=0)
-    newtext = gtfinder.sub("\g<1>&gt;", newtext, count=0)
-    newtext = gtstartfinder.sub("\g<1>&gt;", newtext, count=0)
-
-    if oneline:
-        pass   # I hope I don't regret this
-    else:
-        newtext = re.sub("^(?!\s*<p>)", "<p>", newtext, count=0)
-        newtext = re.sub("([^\n])$", "\g<1>\n", newtext, count=0)
-        newtext = re.sub("\s*\n", "</p>\n", newtext, count=0)
-        newtext = re.sub("</p></p>", "</p>", newtext, count=0)
-        newtext = re.sub("\n(?!\s*<p>)([^\n]*</p>)", "\n<p>\g<1>", newtext, count=0)
-        newtext = re.sub("^\s*<p></p>\s*$", "", newtext, count=0)
-        newtext = re.sub("\n", "\n\n", newtext, count=0)
-    
-    return newtext;
-
-def dtohms( degrees ):
-    fullhours = degrees/15.
-    hours = int(math.floor(fullhours))
-    minutes = int( math.floor( (fullhours - hours) * 60 ) )
-    seconds = int( math.floor( ((fullhours - hours)*60 - minutes) * 60  + 0.5 ) )
-    return "{:02d}:{:02d}:{:02d}".format(hours, minutes, seconds)
-
-def dtodms( degrees ):
-    sign = '+' if degrees > 0 else '-'
-    degrees = math.fabs( degrees )
-    degs = int(math.floor(degrees))
-    mins = int( math.floor( (degrees-degs) * 60 ) )
-    secs = int( math.floor( ((degrees-degs)*60 - mins) * 600 + 0.5 ) ) / 10.
-    return "{:1s}{:02d}:{:02d}:{:04.1f}".format(sign, degs, mins, secs)
-
-def radectolb( ra, dec ):
-    """ra and dec in degrees"""
-    decngp = 27.12825 * math.pi/180.
-    rangp = 192.85948 * math.pi/180.
-    lncp = 122.93192 * math.pi/180.
-    ra *= math.pi/180.
-    dec *= math.pi/180.
-    b = math.asin( math.sin(dec)*math.sin(decngp) + math.cos(dec)*math.cos(decngp)*math.cos(ra-rangp) )
-    l = lncp - math.atan2( math.cos(dec)*math.sin(ra-rangp)/math.cos(b) ,
-                           (math.sin(dec)*math.cos(decngp) - math.cos(dec)*math.sin(decngp)*math.cos(ra-rangp))
-                           / math.cos(b) )
-    if l < 0: l += 2.*math.pi
-    return l*180./math.pi, b*180./math.pi
-
-def mjd( y,m,d,h,minute,s ):
-    # Trusting Wikipedia....
-    if ( h < 12 ): d -= 1
-    jd = ( int( 1461 * ( y + 4800 + int( (m - 14) / 12 ) ) / 4 ) +
-           + int( (367 * (m - 2 - 12 * int( (m - 14) / 12 ) ) ) / 12 )
-           - int( (3 * int( (y + 4900 + int( (m - 14) / 12) ) / 100 ) ) / 4 )  + d - 32075 )
-    jd += ( (h-12) + minute/60. + s/3600. ) / 24.
-    if (h < 12):
-        jd += 1.
-    return jd - 2400000.5
+# rightpassword = "Lambdaneq0"
 
 # ======================================================================
 
@@ -157,9 +64,9 @@ class HandlerBase(object):
     def htmltop(self):
         self.response = "<!DOCTYPE html>\n"
         self.response += "<html>\n<head>\n<meta charset=\"UTF-8\">\n"
-        self.response += "<link rel=\"stylesheet\" href=\"/raknop/viewexps.css\">\n"
-        self.response += "<script src=\"/raknop/viewexps.js\"></script>\n"
-        self.response += "<title>Quick-n-dirty candidate viewer</title>\n"
+        self.response += "<link rel=\"stylesheet\" href=\"{}decat.css\">\n".format( webapdirurl )
+        self.response += "<script src=\"{}decatview.js\"></script>\n".format( webapdirurl )
+        self.response += "<title>DECaT LBL Pipeline Candidate Viewer</title>\n"
         self.response += "</head>\n<body>\n"
 
     def htmlbottom(self):
@@ -182,14 +89,18 @@ class FrontPage(HandlerBase):
         web.header('Content-Type', 'text/html; charset="UTF-8"')
         self.htmltop()
 
+        data = web.input()
+        date0 = data["date0"] if "date0" in data else ""
+        date1 = data["date1"] if "date1" in data else ""
+        
         self.response += "<h1>DECAT subtraction viewer</h1>\n"
         self.response += "<p>Enter dates as yyyy-mm-dd or yyyy-mm-dd hh:mm:ss or yyyy-mm-dd hh:mm:ss-05:00\n"
         self.response += "(the last one indicating a time zone that is 5 hours before UTC)."
         self.response += "<form method=\"POST\" action=\"{}/listexp\"><p>\n".format( webapfullurl )
         self.response += "<p>List exposures from date\n";
-        self.response += "<input type=\"text\" name=\"date0\" value=\"\">\n"
+        self.response += "<input type=\"text\" name=\"date0\" value=\"{}\">\n".format( date0 )
         self.response += "&nbsp;&nbsp;to&nbsp;&nbsp;"
-        self.response += "<input type=\"text\" name=\"date1\" value=\"\"></p>\n"
+        self.response += "<input type=\"text\" name=\"date1\" value=\"{}\"></p>\n".format( date1 )
         self.response += "<p><input type=\"submit\" name=\"submit\" value=\"List Exposures\"></p>\n"
         self.response += "</form>\n"
 
@@ -223,22 +134,27 @@ class ListExposures(HandlerBase):
                 t1 = pytz.utc.localize( t1 )
             t1 = t1.astimezone( pytz.utc )
         except ValueError as ex:
-            self.response += "<p>...error parsing your dates...</p>\n"
+            self.response += "<p>...error parsing your dates... go back.</p>\n"
             self.htmlbottom()
             return self.response
 
         mjd0 = mjd( t0.year, t0.month, t0.day, t0.hour, t0.minute, t0.second )
         mjd1 = mjd( t1.year, t1.month, t1.day, t1.hour, t1.minute, t1.second )
 
-        self.response += "<p><a href=\"{}/\">Back to home</a></p>\n".format(webapfullurl);
+        self.response += '<form method=\"POST\" action=\"{}\">\n'.format( webapfullurl )
+        self.response += '<input type=\"hidden\" name=\"date0\" value=\"{}\">\n'.format( date0 )
+        self.response += '<input type=\"hidden\" name=\"date1\" value=\"{}\">\n'.format( date1 )
+        self.response += "<p><button class=\"link\" type=\"submit\">Back to Home</button></p>\n"
+        self.response += "</form>\n"
+        
         self.response += "<h4>Exposures from {} to {}</h4>\n".format( t0.isoformat(), t1.isoformat() )
 
         exposures = {}
         exporder = []
         
         # sys.stderr.write("ListExposures about to send DB query\n")
-        cursor = self.db.cursor()
-        query = ( "SELECT e.filename,e.filter,COUNT(s.id) FROM exposures e "
+        cursor = self.db.cursor( )
+        query = ( "SELECT e.filename,e.filter,COUNT(s.id),header->"EXPTIME" FROM exposures e "
                   "LEFT JOIN subtractions s ON s.exposure_id=e.id "
                   "WHERE e.mjd>=%s AND e.mjd<=%s"
                   "GROUP BY e.filename,e.filter,e.mjd "
@@ -247,7 +163,7 @@ class ListExposures(HandlerBase):
         rows = cursor.fetchall()
         for row in rows:
             exporder.append( row[0] )
-            exposures[ row[0] ] = { "filter": row[1], "nsubs": row[2] }
+            exposures[ row[0] ] = { "filter": row[1], "nsubs": row[2], "exptime": row[3] }
 
         if len(exporder) == 0:
             self.response += "<p>No exposures!</p>\n"
@@ -256,7 +172,7 @@ class ListExposures(HandlerBase):
             return self.response
             
         query = ( "SELECT filename,ra,dec FROM exposures WHERE filename IN %s" )
-        sys.stderr.write( "{}\n".format( cursor.mogrify( query, ( tuple(exporder), ) ) ) )
+        # sys.stderr.write( "{}\n".format( cursor.mogrify( query, ( tuple(exporder), ) ) ) )
         cursor.execute( query, ( tuple(exporder), ) )
         rows = cursor.fetchall()
         for row in rows:
@@ -290,24 +206,25 @@ class ListExposures(HandlerBase):
                   "ORDER BY e.mjd " )
         cursor.execute( query, ( tuple(exporder), ) )
         rows = cursor.fetchall()
-        cursor.close()
         for row in rows:
             exposures[ row[0] ]["nhighrb"] = row[1]
 
+        # Count the number that have made it through event id type "objectslogged" (27)
+        query = ( "SELECT e.filename,COUNT(p.id) FROM exposures e "
+                  "INNER JOIN processcheckpoints p ON e.id=p.exposure_id "
+                  "WHERE e.filename in %s AND p.event_id=27 "
+                  "GROUP BY e.filename" )
+        cursor.execute( query, ( tuple(exporder), ) )
+        rows = cursor.fetchall()
+        cursor.close()
+        for row in rows:
+            exposures[ row[0] ]["nfinished"] = row[1]
+            
         cursor.close()
             
-        # sys.stderr.write("ListExposures building forms\n")
-        self.response += "<form method=\"POST\" action=\"{}/showexp\"><p>\n".format( webapfullurl )
-        # self.response += "<form method=\"POST\" action=\"{}/dumpdata\"><p>\n".format( webapfullurl )
-        # self.response += "User:\n"
-        # self.response += "<input type=\"radio\" name=\"user\" id=\"useridknop\" value=\"knop\">\n"
-        # self.response += "  <label for=\"useridknop\">Rob Knop</label>\n";
-        # self.response += "<input type=\"radio\" name=\"user\" id=\"useridnugent\" value=\"nugent\">\n"
-        # self.response += "  <label for=\"useridnugent\">Peter Nugent</label><br>\n"
-        # self.response += "Password: <input type=\"text\" name=\"password\"><br>\n"
         self.response += "Number of objects per page: <input type=\"number\" name=\"numperpage\" value=100><br>\n"
         self.response += "Only include ccd numbers (comma-sep): "
-        self.response += "<input type=\"text\" name=\"ccds\" value=\"\">\n<br>\n"
+        self.response += "<input type=\"text\" name=\"ccds\" id=\"ccds\" value=\"\">\n<br>\n"
         self.response += "  Order by:\n"
         self.response += "<input type=\"radio\" name=\"orderby\" id=\"real/bogus\" value=\"real/bogus\" checked=1>\n"
         self.response += "  <label for=\"real/bogus\">Real/Bogus</label>\n"
@@ -315,32 +232,42 @@ class ListExposures(HandlerBase):
         self.response += "  <label for=\"objnum\">Object Num.</label><br>\n"
         self.response += "<input type=\"checkbox\" id=\"showrb\" name=\"showrb\" value=\"showrb\" checked=1>\n"
         self.response += "  <label for=\"showrb\">Show r/b?</label></p>\n"
-        self.response += "<input type=\"hidden\" name=\"offset\" value=0>\n</p>\n"
+        self.response += "<input type=\"hidden\" name=\"offset\" id=\"offset\" value=0>\n</p>\n"
+        self.response += "<input type=\"hidden\" name=\"date0\" id=\"date0\" value={}>\n</p>\n".format(date0)
+        self.response += "<input type=\"hidden\" name=\"date1\" id=\"date1\" value={}>\n</p>\n".format(date1)
         self.response += "<table class=\"exposurelist\">\n"
-        self.response += ( "<tr><th>Exposure</th><th>Filter</th><th>ra</th><th>dec</th><th>l</th><th>b</th>"
-                           "<th>N. Subtractions</th><th>N. Objects</th>"
+        self.response += ( "<tr><th>Exposure</th><th>Filter</th><th>t_exp</th>"
+                           "<th>ra</th><th>dec</th><th>l</th><th>b</th>"
+                           "<th>#Subs</th><th>#Done</th><th>N. Objects</th>"
                            "<th>rb>=0.6</th></tr>\n" )
         for exp in exporder:
             ra = exposures[exp]["ra"]
             dec = exposures[exp]["dec"]
             l,b = radectolb( ra, dec )
-            self.response += ( "<tr><td><input type=\"submit\" name=\"exposure\" value=\"{}\"></td>\n"
-                               .format( exp ) )
+            self.response += '<tr><td>{exp}</td>\n'.format(exp=exp);
             self.response += "  <td>{}</td>\n".format( exposures[exp]["filter"] )
+            self.response += "  <td>{}</td>\n".format( exposures[exp]["exptime"] )
             self.response += '  <td>{}</td>\n'.format(dtohms(ra))
             self.response += '  <td>{}</td>\n'.format(dtodms(dec))
             self.response += '  <td>{:.02f}</td>\n'.format(l)
             self.response += '  <td>{:.02f}</td>\n'.format(b)
             self.response += "  <td>{}</td>\n".format( exposures[exp]["nsubs"] )
+            if "nfinished" in exposures[exp]:
+                self.response += "  <td>{}</td>\n".format( exposures[exp]["nfinished"] )
+            else:
+                self.response += "  <td>—</td>\n"
             self.response += "  <td>{}</td>\n".format( exposures[exp]["nobjs"] )
             if "nhighrb" in exposures[exp]:
                 self.response += "  <td>{}</td>\n".format( exposures[exp]["nhighrb"] )
             else:
                 self.response += "  <td>—</td>\n"
+            self.response += ( "  <td><button type=\"submit\" name=\"submit\" value=\"Show Objects\" "
+                               "onclick=\"showobjects('{}')\">Show Objects</button></td>\n".format( exp ) )
+            self.response += ( "  <td><button type=\"submit\" name=\"submit\" value=\"Show Log\" "
+                               "onclick=\"showlog('{}')\">Show Log</button></td>\n".format( exp ) )
             self.response += "</tr>\n"
             
         self.response += "</table>\n"
-        self.response += "</form>\n"
 
         self.htmlbottom()
         return self.response
@@ -349,62 +276,95 @@ class ListExposures(HandlerBase):
 
 class ShowExposure(HandlerBase):
     
-    def prevnext( self, offset, numobjs, numperpage, filename, ccds, showrb, orderby, user, password ):
-        nextform = form.Form(
-            form.Hidden("offset", value=offset+numperpage),
-            form.Hidden("numperpage", value=numperpage),
-            form.Hidden("exposure", value=filename),
-            form.Hidden("ccds", value=ccds),
-            form.Hidden("orderby", value=orderby),
-            form.Hidden("user", value=user),
-            form.Hidden("password", value=password),
-            form.Hidden("showrb", value=( "showrb" if showrb else "no" ) ),
-            form.Button("Next {}".format(numperpage), type="submit", formaction="{}/showexp".format(webapfullurl))
-        )
-        prevform = form.Form(
-            form.Hidden("offset", value=offset-numperpage),
-            form.Hidden("numperpage", value=numperpage),
-            form.Hidden("exposure", value=filename),
-            form.Hidden("ccds", value=ccds),
-            form.Hidden("orderby", value=orderby),
-            form.Hidden("user", value=user),
-            form.Hidden("password", value=password),
-            form.Hidden("showrb", value=( "showrb" if showrb else "no" ) ),
-            form.Button("Previous {}".format(numperpage), type="submit", formaction="{}/showexp".format(webapfullurl))
-        )
+    def prevnext( self, state, numobjs ):
+        nextarr = []
+        prevarr = []
+        for key in state:
+            if key=="offset":
+                value = int(state["offset"]) + int(state["numperpage"])
+            else:
+                value = state[key]
+            nextarr.append( form.Hidden( key, value=value ) )
+            if key=="offset":
+                value = int(state["offset"]) - int(state["numperpage"])
+                value = value if value > 0 else 0
+            prevarr.append( form.Hidden( key, value=value ) )
+        nextarr.append( form.Button( "Next {}".format( state["numperpage"] ),
+                                     type="submit",
+                                     formaction="{}/showexp".format( webapfullurl ) ) )
+        nextarr.append( form.Button( "Previous {}".format( state["numperpage"] ),
+                                     type="submit",
+                                     formaction="{}/showexp".format( webapfullurl ) ) )
+        
+        nextform = form.Form( *nextarr )
+        prevform = form.Form( *prevarr )
 
-        self.response += "<p><a href=\"{}/\">Back to home</a></p>\n".format(webapfullurl);
-        if offset > 0:
+
+        self.response += "<form method=\"Post\" action=\"{}\">\n".format( webapfullurl );
+        self.response += "<input type=\"hidden\" name=\"date0\" value=\"{}\">\n".format( state[ "date0" ] )
+        self.response += "<input type=\"hidden\" name=\"date1\" value=\"{}\">\n".format( state[ "date1" ] )
+        self.response += "<p><input type=\"submit\" name=\"submit\" value=\"Back to home\" class=\"link\"></p>\n"
+        self.response += "</form>\n"
+        # self.response += "<p><a href=\"{}/\">Back to home</a></p>\n".format(webapfullurl);
+
+        # self.response += ( "<p>In prevnext, offset={}, numperpage={}, numobjs={}</p>\n"
+        #                    .format( state["offset"], state["numperpage"], numobjs ) )
+        
+        if int(state["offset"]) > 0:
             self.response += "<form method=\"Post\">\n"
             self.response += prevform.render()
             self.response += "</form>\n"
-        if offset+numperpage < numobjs:
+        if int(state["offset"]) + int(state["numperpage"]) < numobjs:
             self.response += "<form method=\"Post\">\n"
             self.response += nextform.render()
             self.response += "</form>\n"
-    
+
+    # ========================================
+        
     def do_the_things(self):
-        global rightpassword
+        # global rightpassword
         web.header('Content-Type', 'text/html; charset="UTF-8"')
         self.htmltop()
 
+        state = { "date0": "",
+                  "date1": "",
+                  "offset": 0,
+                  "numperpage": 100,
+                  "exposure": "",
+                  "orderby": "real/bogus",
+                  "ccds": "",
+                  "showrb": False,
+                  "whattodo": "Show Objects",
+                  }
         data = web.input()
-        offset = int( data["offset"] )
-        if offset < 0: offset = 0
-        numperpage = int( data["numperpage"] )
-        filename = data["exposure"]
-        orderby = data["orderby"]
-        if "showrb" in data and data["showrb"]=="showrb":
-            showrb = True
+        for stateval in state:
+            if stateval in data:
+                state[stateval] = data[stateval]
+
+        sys.stderr.write( "ShowExposure data = {}, state = {}\n".format( json.dumps( data ),
+                                                                         json.dumps( stateval ) ) )
+                
+        if state["whattodo"] == "Show Objects":
+            self.show_objects( state )
+        elif state["whattodo"] == "Show Log":
+            self.show_log( state )
         else:
-            showrb = False
-        user = data["user"] if "user" in data else None
-        passwd = None
-        if user is not None:
-            passwd = data["password"] if "password" in data else None
-        # sys.stderr.write("user is {} and password is {}\n".format( user, passwd ) )
+            self.response += "<p>Unknown action {}, go back.</p>".format( state["whattodo"] )
+
+        self.htmlbottom()
+        return self.response
+
+    # ========================================
+    
+    def show_objects( self, state ):
+        offset = int( state["offset"] )
+        if offset < 0: offset = 0
+        numperpage = int( state["numperpage"] )
+        filename = state["exposure"]
+        orderby = state["orderby"]
+        showrb = state["showrb"]
             
-        ccdarr = data["ccds"].split(",")
+        ccdarr = state["ccds"].split(",")
         if len(ccdarr) == 0: ccds = None
         else:
             ccdnums = []
@@ -433,26 +393,28 @@ class ShowExposure(HandlerBase):
                   "WHERE e.filename=%s " )
         if ccds is not None:
             query += " AND s.ccdnum IN {} ".format(ccds)
-        cursor = self.db.cursor()
+        cursor = self.db.cursor( )
+        # sys.stderr.write( "Sending query \"{}\"\n".format( cursor.mogrify( query, [ filename ] ) ) )
         cursor.execute( query, [ filename ] )
         row = cursor.fetchone()
         cursor.close()
         numobjs = int(row[0])
 
-        self.prevnext( offset, numobjs, numperpage, filename, data["ccds"], showrb, orderby, user, passwd )
+        self.prevnext( state, numobjs )
 
         self.response += "<h3>Exposure: {}</h3>\n".format( filename )
-        self.response += "<h4>User: {}</h3>\n".format( user )
         self.response += "<h4>Candidates starting at offset {} out of {}</h4>\n".format( offset, numobjs )
 
-        query = ( "SELECT c.id,o.id,o.rb,o.ra,o.dec,s.ccdnum,e.filename,tg.knopgood,tg.nugentgood,"
-                  "ENCODE(cu.sci_jpeg, 'base64'),ENCODE(cu.ref_jpeg, 'base64'),ENCODE(cu.diff_jpeg, 'base64') "
+        query = ( "SELECT c.id as cid,o.id as oid,o.rb,o.ra,o.dec,s.ccdnum,e.filename, "  # tg.knopgood,tg.nugentgood,"
+                  "ENCODE(cu.sci_jpeg, 'base64') as scijpg, "
+                  "ENCODE(cu.ref_jpeg, 'base64') as refjpg, "
+                  "ENCODE(cu.diff_jpeg, 'base64') as diffjpg "
                   "FROM objects o "
                   "INNER JOIN candidates c ON o.candidate_id=c.id "
                   "INNER JOIN subtractions s ON o.subtraction_id=s.id "
                   "INNER JOIN exposures e ON s.exposure_id=e.id "
                   "LEFT JOIN cutouts cu ON cu.object_id=o.id "
-                  "LEFT JOIN tmpobjgood tg ON tg.objid=o.id "
+                  # "LEFT JOIN tmpobjgood tg ON tg.objid=o.id "
                   "WHERE e.filename=%s " );
         if ccds is not None:
             query += ' AND s.ccdnum IN {} '.format(ccds)
@@ -461,30 +423,38 @@ class ShowExposure(HandlerBase):
         elif orderby == "objnum":
             query += " ORDER BY o.id "
         query += " LIMIT %s OFFSET %s"
-        sys.stderr.write("Sending query \"{}\"\n".format(query))
-        cursor = self.db.cursor()
+        # sys.stderr.write("Sending query \"{}\"\n".format(query))
+        cursor = self.db.cursor(  cursor_factory = psycopg2.extras.DictCursor )
         cursor.execute( query, ( filename, numperpage, offset ) )
         rows = cursor.fetchall()
         cursor.close()
 
+        self.response += "<form method=\"POST\" action=\"{}showcand\">\n".format( webapfullurl )
+        for key in state:
+            if key != "candidate":
+                self.response += ( "<input type=\"hidden\" name=\"{}\" value=\"{}\">\n"
+                                   .format( key, state[key] ) )
+        
         self.response += "<table class=\"maintable\">\n"
         self.response += "<tr><th>Info</th><th>New</th><th>Ref</th><th>Sub</th></tr>\n"
         
         for row in rows:
-            candid = row[0]
-            objid = row[1]
-            rb = row[2]
-            ra = row[3]
-            dec = row[4]
-            ccdnum = row[5]
-            filename = row[6]
-            good = { "knop": row[7], "nugent": row[8] }
-            scib64 = row[9]
-            refb64 = row[10]
-            diffb64 = row[11]
+            candid = row["cid"]
+            objid = row["oid"]
+            rb = row["rb"]
+            ra = row["ra"]
+            dec = row["dec"]
+            ccdnum = row["ccdnum"]
+            filename = row["filename"]
+            # good = { "knop": row[7], "nugent": row[8] }
+            scib64 = row["scijpg"]
+            refb64 = row["refjpg"]
+            diffb64 = row["diffjpg"]
             
             self.response += "<tr>\n"
-            self.response += "<td>Candidate: {}<br>\n".format( candid )
+            self.response += "<td>Candidate: "
+            self.response += ( "<button class=\"link\" name=\"candidate\" value=\"{candid}\">{candid}</button><br>\n"
+                               .format( candid=candid ) )
             if showrb:
                 self.response += "<b>rb: {:.4f}</b><br>\n".format( rb )
             self.response += u"α: {} &nbsp;&nbsp; δ: {}<br>\n".format( dtohms( ra ), dtodms( dec ) )
@@ -547,10 +517,56 @@ class ShowExposure(HandlerBase):
             self.response += "</tr>\n"
         self.response += "</table>\n"
 
-        self.prevnext( offset, numobjs, numperpage, filename, data["ccds"], showrb, orderby, user, passwd )
+        self.prevnext( state, numobjs )
 
-        self.htmlbottom()
-        return self.response
+    # ========================================
+        
+    def show_log( self, state ):
+        query = ( "SELECT p.created_at,p.ccdnum,p.running_node,p.mpi_rank,p.notes,c.description "
+                  "FROM processcheckpoints p "
+                  "INNER JOIN exposures e ON p.exposure_id=e.id "
+                  "LEFT JOIN checkpointeventdefs c ON p.event_id=c.id "
+                  "WHERE e.filename=%s ORDER BY p.created_at" )
+        cursor = self.db.cursor( cursor_factory = psycopg2.extras.DictCursor )
+        cursor.execute( query, ( state["exposure"], ) )
+        rows = cursor.fetchall()
+        cursor.close()
+
+        self.response += "<h2>{}</h2>\n".format( state["exposure"] )
+
+        if len(rows) == 0:
+            self.response += "<p>No log information.</p>\n"
+            return
+
+        self.response += "<p>Ran on {}</p>\n".format( rows[0]["running_node"] )
+        
+        self.response += "<p>Jump to CCD:\n"
+        for i in range(1, 61):
+            self.response+='&nbsp;<a href="#{num}">{num}</a>&nbsp;\n'.format( num=i )
+        self.response += "</p>\n"
+
+        for i in range(1, 61):
+            self.response += "<h3 id=\"{num}\">CCD {num}</h3>\n".format( num=i  )
+
+            self.response += "<table class=\"logtable\">\n"
+            self.response += "<tr><th>CCD</th><th>Rank</th><th>Time</th><th>Event</th><th>Notes</th></tr>\n"
+            
+            for row in rows:
+                if row["ccdnum"] == -1 or row["ccdnum"] == i:
+                    self.response += "<tr><td>{}</td>\n".format( row["ccdnum"] )
+                    self.response += "  <td>{}</td>\n".format( row["mpi_rank"] )
+                    # self.response += "  <td>{}</td>\n".format( row["created_at"].isoformat( timespec="seconds") )
+                    self.response += "  <td>{}</td>\n".format( row["created_at"].strftime( "%Y-%m-%d %H:%M:%S" ) )
+                    self.response += "  <td>{}</td>\n".format( row["description"] )
+                    if row["notes"] is not None:
+                        self.response += "  <td>{}</td>\n".format( row["notes"] )
+                    else:
+                        self.response += "  <td></td>\n"
+                    self.response += "</tr>\n"
+
+            self.response += "</table>\n"
+        
+
 
 # ======================================================================
 
@@ -595,6 +611,101 @@ class SetGoodBad(HandlerBase):
         
 
 # ======================================================================
+
+class ShowCandidate(HandlerBase):
+    def do_the_things( self ):
+        web.header('Content-Type', 'text/html; charset="UTF-8"')
+        self.htmltop()
+        data = web.input()
+
+        # I'm typing this a second time so I know I'm Doing It Wrong
+        state = { "date0": "",
+                  "date1": "",
+                  "offset": 0,
+                  "numperpage": 100,
+                  "exposure": "",
+                  "candidate": "",
+                  "orderby": "real/bogus",
+                  "ccds": "",
+                  "showrb": False }
+        for stateval in state:
+            if stateval in data:
+                state[stateval] = data[stateval]
+
+        self.response += '<form method=\"POST\" action=\"{}\">\n'.format( webapfullurl )
+        self.response += '<input type=\"hidden\" name=\"date0\" value=\"{}\">\n'.format( state[ "date0" ] )
+        self.response += '<input type=\"hidden\" name=\"date1\" value=\"{}\">\n'.format( state[ "date1" ] )
+        self.response += "<p><button class=\"link\" type=\"submit\">Back to Home</button></p>\n"
+        self.response += "</form>\n"
+
+        self.response += "<h3>Candidate: {}</h3>\n".format( state["candidate"] )
+        self.response += ( "<p>(<a href=\"{}/showcand?candidate={}\">Share Link</a>)</p>\n"
+                           .format( webapfullurl, state[ "candidate" ] ) )
+        
+        cursor = self.db.cursor( cursor_factory = psycopg2.extras.DictCursor )
+        query = ( "SELECT * FROM candidates WHERE id=%s" )
+        cursor.execute( query, ( state["candidate"], ) )
+        rows = cursor.fetchall()
+        if len(rows) == 0:
+            self.db.close()
+            self.response += "<p>No candidate {}</p>\n".format( state["candidate"] )
+            self.htmlbottom()
+            return self.response
+        candidate = rows[0]
+
+        query= ( "SELECT o.id,o.ra,o.dec,o.created_at,o.modified,o.rb,o.mag,o.magerr, "
+                 "e.filename,e.filter,e.mjd, "
+                 "ENCODE(c.sci_jpeg, 'base64') as sci_jpeg, "
+                 "ENCODE(c.ref_jpeg, 'base64') as ref_jpeg, "
+                 "ENCODE(c.diff_jpeg, 'base64') as diff_jpeg "
+                 "FROM objects o "
+                 "INNER JOIN subtractions s ON o.subtraction_id=s.id "
+                 "INNER JOIN exposures e ON s.exposure_id=e.id "
+                 "LEFT JOIN cutouts c ON c.object_id=o.id "
+                 "WHERE o.candidate_id=%s ORDER BY e.mjd,e.filter" )
+        sys.stderr.write( "{}\n".format( cursor.mogrify( query, ( state["candidate"], ) ) ) )
+        cursor.execute( query, ( state["candidate"], ) )
+        rows = cursor.fetchall()
+        cursor.close()
+        
+        self.response += "<form method=\"post\" action=\"{}/showexp\"></p>\n".format( webapfullurl )
+
+        for key in state:
+            if key != "exposure":
+                self.response += ( "<input type=\"hidden\" name=\"{}\" value=\"{}\">\n"
+                                   .format( key, state[key] ) )
+
+        self.response += "<table class=\"maintable\">\n"
+        self.response += "<tr><th>Exposure</th><th>New</th><th>Ref</th><th>Sub</th></tr>\n"
+
+        for row in rows:
+            # Make exposure a button that looks like a link
+            self.response += "<tr>\n<td>Exposure: {}<br>\n".format( row["filename"] )
+            self.response += "MJD: {}<br>\n".format( row["mjd"] )
+            self.response += "Filter: {}<br>\n".format( row["filter"] )
+            self.response += "Mag: {:.2f}±{:.2f}<br>\n".format( row["mag"], row["magerr"] )
+            self.response += "R/B: {:.3f}\n</td>\n".format( row["rb"] )
+            if row["sci_jpeg"] is None:
+                self.response += "<td>(Sci cutout missing)</td>\n"
+            else:
+                self.response += ( "<td><img src=\"data:image/jpeg;base64,{}\" width=204 "
+                                   "height=204 alt=\"New\"></td>\n" ).format( row["sci_jpeg"] )
+            if row["ref_jpeg"] is None:
+                self.response += "<td>(Ref cutout missing)</td>\n"
+            else:
+                self.response += ( "<td><img src=\"data:image/jpeg;base64,{}\" width=204 "
+                                   "height=204 alt=\"New\"></td>\n" ).format( row["ref_jpeg"] )
+            if row["diff_jpeg"] is None:
+                self.response += "<td>(Diff cutout missing)</td>\n"
+            else:
+                self.response += ( "<td><img src=\"data:image/jpeg;base64,{}\" width=204 "
+                                   "height=204 alt=\"New\"></td>\n" ).format( row["diff_jpeg"] )
+            self.response += "</tr>\n"
+        self.response += "</table>\n"
+                
+        return self.response
+
+# ======================================================================
     
 class DumpData(HandlerBase):
     def do_the_things( self ):
@@ -609,16 +720,16 @@ class DumpData(HandlerBase):
         self.htmlbottom()
         return self.response
 
-
-    
 # ======================================================================
 
 urls = (
     '/', "FrontPage",
     "/listexp", "ListExposures",
     "/showexp", "ShowExposure" ,
+    "/showcand", "ShowCandidate" ,
     "/dumpdata", "DumpData" ,
     "/setgoodbad", "SetGoodBad" ,
     )
 
 application = web.application(urls, globals()).wsgifunc()
+

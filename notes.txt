@@ -1,0 +1,27 @@
+Secrets and config data go to ~rknop/decatview_secrets
+
+This is to reduce the probability of the web server reading it.  Of
+course, the wsgi daemon process can read it still....
+
+Need to create a wsgi process group.  Do this by editing the apache
+config and putting in the 000-default-ssl.conf, inside the
+<VirtualHost _default_:443> section:
+
+   WSGIDaemonProcess decatview user=raknop group=raknop processes=2 threads=15 display-name=%{GROUP}
+   WSGIProcessGroup %{ENV:PROCESS_GROUP}
+   SetEnv PROCESS_GROUP "%{GLOBAL}"
+
+The SetEnv tells the server that unless otherwise specified, WSGI
+scripts should run under the "global" process group (i.e. as user
+www-data within the regular apache process).
+
+Then, in the .htaccess file of the directory you need
+
+   SetEnv PROCESS_GROUP decatview
+
+That, with the other configuration above, tells apache to run wsgi files
+in this directory under the decatview process group, which will run as
+user raknop.
+
+
+  

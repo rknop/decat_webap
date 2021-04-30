@@ -1,4 +1,4 @@
-webap = "https://c3.lbl.gov/raknop/viewexps.py/"
+webap = "https://c3.lbl.gov/raknop/decat/view/decatview.py/"
 
 waitforresponse = function( request )
 {
@@ -39,6 +39,51 @@ catchHttpResponse = function( req, handler, errorhandler )
     }
     handler( statedata );
 }
+
+get_show_exp_data = function( exposure )
+{
+    var data = {};
+    data.ccds = document.getElementById("ccds").value;
+    data.orderby = document.getElementById("real/bogus").value;
+    data.showrb = document.getElementById("showrb").value;
+    data.offset = document.getElementById("offset").value;
+    data.date0 = document.getElementById("date0").value;
+    data.date1 = document.getElementById("date1").value;
+    data.exposure = exposure;
+    return data;
+}
+
+send_show_exp_request = function( reqdata )
+{
+    var form = document.createElement( "form" );
+    form.setAttribute( "method", "post" );
+    form.setAttribute( "action", webap + "showexp" );
+    for ( let i in reqdata ) {
+        let input = document.createElement( "input" );
+        input.setAttribute( "name", i );
+        input.setAttribute( "type", "hidden" );
+        input.setAttribute( "value", reqdata[i] );
+        form.appendChild( input );
+    }
+    console.log( "Submitting form to " + form.getAttribute("action") );
+    document.body.appendChild( form );
+    form.submit()
+}
+
+showobjects = function( exposure )
+{
+    var reqdata = get_show_exp_data( exposure )
+    reqdata.whattodo = "Show Objects";
+    send_show_exp_request( reqdata );
+}
+
+showlog = function( exposure )
+{
+    var reqdata = get_show_exp_data( exposure )
+    reqdata.whattodo = "Show Log";
+    send_show_exp_request( reqdata );
+}
+
 
 sendgoodbad = function( user, password, obj, goodbad )
 {
