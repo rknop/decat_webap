@@ -32,6 +32,8 @@ table.logtable td { border-bottom: 2px solid var(--half-faded-color);
                     padding: 2px;
                     padding-right: 1em }
 
+table.candsearchparams td { text-align: right }
+
 .good { font-weight: bold; color: #00c000; }
 .bad { font-weight: bold; color: #c00000; }
 

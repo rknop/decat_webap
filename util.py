@@ -103,3 +103,27 @@ def mjd( y,m,d,h,minute,s ):
         jd += 1.
     return jd - 2400000.5
 
+def dateofmjd( mjd ):
+    # Again trusting Wikipeida...
+    jd = mjd + 2400000.5
+    y = 4716
+    j = 1401
+    m = 2
+    n = 12
+    r = 4
+    p = 1461
+    v = 3
+    u = 5
+    s = 153
+    w = 2
+    B = 274277
+    C = -38
+
+    f = jd + j + (((4 * jd + B) // 146097) * 3) // 4 + C
+    e = r * f + v
+    g = ( e % p ) // r 
+    h = u * g + w
+    D = ( h % s ) // u + 1
+    M = ( ( h // s + m ) % n ) + 1
+    Y = (e // p) - y + (n + m - M) // n
+    return (Y,M,D)

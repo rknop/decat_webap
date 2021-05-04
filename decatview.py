@@ -29,7 +29,7 @@ if not "/var/www/raknop/decat/view" in sys.path:
     sys.path.insert(0, "/var/www/raknop/decat/view")
 
 from webapconfig import webapfullurl, webapdir, webapdirurl, DBdata
-from util import dtohms, dtodms, radectolb, mjd
+from util import dtohms, dtodms, radectolb, mjd, dateofmjd
 
 # sys.stderr.write("About to import astropy\n")
 # s.environ["XDG_CONFIG_HOME"] = "/var/www/astropy"
@@ -94,6 +94,8 @@ class FrontPage(HandlerBase):
         date1 = data["date1"] if "date1" in data else ""
         
         self.response += "<h1>DECAT subtraction viewer</h1>\n"
+
+        self.response += "<h2>Exposure Search</h3>\n"
         self.response += "<p>Enter dates as yyyy-mm-dd or yyyy-mm-dd hh:mm:ss or yyyy-mm-dd hh:mm:ss-05:00\n"
         self.response += "(the last one indicating a time zone that is 5 hours before UTC)."
         self.response += "<form method=\"POST\" action=\"{}/listexp\"><p>\n".format( webapfullurl )
@@ -104,9 +106,201 @@ class FrontPage(HandlerBase):
         self.response += "<p><input type=\"submit\" name=\"submit\" value=\"List Exposures\"></p>\n"
         self.response += "</form>\n"
 
+        self.response += "<h2>Candidate Search</h3>\n"
+        self.response += "<form method=\"POST\" action=\"{}/findcands\"></p>\n".format( webapfullurl )
+        self.response += "<table class=\"candsearchparams\">\n"
+        self.response += "<tr><td>Min # Detections:</td>"
+        self.response += ( "<td><input name=\"mindet\" type=\"number\" "
+                           "min=\"1\" max=\"1000\" step=\"1\" value=\"5\"></td></tr>\n" )
+        self.response += "<tr><td>Min # rb≥"
+        self.response += ( "<input name=\"rbcut\" type=\"number\" min=\"0\" max=\"1\" step=\"any\" "
+                           "size=\"4\" value=\"0.6\"></td>" )
+        self.response += ( "<td><input name=\"minrb\" type=\"number\" min=\"0\" max=\"1000\" step=\"1\" "
+                           "value=\"5\"></td></tr>\n" )
+        self.response += "<tr><td>Min diff. days detected:</td>"
+        self.response += ( "<td><input name=\"numdays\" type=\"number\" min=\"0\" max=\"1000\" step=\"1\" "
+                           "value=\"3\"></td></tr>\n" )
+        self.response += "<tr><td>Min (brightest) mag ≤</td>"
+        self.response += ( "<td><input name=\"minmag\" type=\"number\" min=\"15\" max=\"30\" step=\"0.1\" "
+                           "value=\"25\"></td></tr>\n" )
+        self.response += "<tr><td>Max (dimmest) mag ≥</td>"
+        self.response += ( "<td><input name=\"maxmag\" type=\"number\" min=\"15\" max=\"30\" step=\"0.1\" "
+                           "value=\"15\"></td></tr>\n" )
+        self.response += "<tr><td><input name=\"submit\" type=\"submit\" value=\"Search\"></td></tr>"
+        self.response += "</table>\n</form>\n"
+        
+        
         self.htmlbottom()
         return self.response
         
+# ======================================================================
+
+class FindCandidates(HandlerBase):
+    def do_the_things(self):
+        web.header('Content-Type', 'text/html; charset="UTF-8"')
+        self.htmltop()
+        
+        data = web.input()
+        minnum = int( data["mindet"] )
+        rbcut = float( data["rbcut"] )
+        minrbnum = int( data["minrb"] )
+        mindays = int( data["numdays"] )
+        minmag = float( data["minmag"] )
+        maxmag = float( data["maxmag"] )
+
+        self.response += "<p><a href=\"{}\">Back to Home</a></p>\n".format( webapfullurl )
+
+        self.response += ( "<h4>Candidates with ≥{} detections (≥{} with rb≥{:.2f})<br>\n"
+                           .format( minnum, minrbnum, rbcut ) )
+        self.response += ( "seen at ≥{} days apart with brightest mag. ≤{:.2f} and dimmest mag. ≥{:.2f}</h4>\n"
+                           .format( mindays, minmag, maxmag ) )
+                           
+        cursor = self.db.cursor( cursor_factory = psycopg2.extras.DictCursor )
+
+        # One early days check suggested this returned 1/20 of the whole candidates table
+        query = ( "SELECT c.id,count(o.id) AS countobj,max(o.rb) AS maxrb "
+                  "FROM candidates c "
+                  "INNER JOIN objects o ON o.candidate_id=c.id "
+                  "GROUP BY (c.id) "
+                  "HAVING count(o.id)>=%s AND max(o.rb)>=%s "
+                  "ORDER BY c.id " )
+        # sys.stderr.write( "Sending query {}\n".format( cursor.mogrify( query, (minnum,rbcut) ) ) )
+        cursor.execute( query, ( minnum, rbcut ) )
+        rows = cursor.fetchall()
+        if len(rows) == 0:
+            self.response += "<p>None found.</p>"
+            self.htmlbottom()
+            cursor.close()
+            return self.response
+        self.response += "<p>Initial query returned {} candidates</p>\n".format( len(rows) )
+        sys.stderr.write( "Initial query returned {} candidates\n".format( len(rows) ) )
+        
+        candlist = []
+        cands = {}
+        for row in rows:
+            cid = row["id"]
+            candlist.append( cid )
+            cands[cid] = {}
+            cands[cid]["numobj"] = row["countobj"]
+            cands[cid]["jdlist"] = []
+            cands[cid]["filterlist"] = []
+            cands[cid]["maglist"] = []
+            cands[cid]["rblist"] = []
+            cands[cid]["numhighrb"] = 0
+            cands[cid]["minjd"] = 1e32
+            cands[cid]["maxjd"] = 0
+            cands[cid]["minmag"] = 50
+            cands[cid]["maxmag"] = 0
+
+        query = ( "SELECT c.id AS candid,o.id AS objid,o.rb,o.mag,e.mjd,e.filter "
+                  "FROM objects o "
+                  "INNER JOIN subtractions s ON o.subtraction_id=s.id "
+                  "INNER JOIN exposures e ON s.exposure_id=e.id "
+                  "INNER JOIN candidates c ON o.candidate_id=c.id "
+                  "WHERE c.id IN %s" )
+        # sys.stderr.write( "Sending query {}\n".format( cursor.mogrify( query, ( tuple(candlist), ) ) ) )
+        cursor.execute( query, ( tuple(candlist), )  )
+        rows=cursor.fetchall()
+        cursor.close()
+
+        for row in rows:
+            cid = row["candid"]
+            mjd = row["mjd"]
+            mag = row["mag"]
+            filt = row["filter"]
+            rb = row["rb"]
+            cands[cid]["jdlist"].append( mjd )
+            cands[cid]["filterlist"].append( filt )
+            cands[cid]["maglist"].append( mag )
+            cands[cid]["rblist"].append( rb )
+            if mjd < cands[cid]["minjd"]:
+                cands[cid]["minjd"] = mjd
+            if mjd > cands[cid]["maxjd"]:
+                cands[cid]["maxjd"] = mjd
+            if mag < cands[cid]["minmag"]:
+                cands[cid]["minmag"] = mag
+            if mag > cands[cid]["maxmag"]:
+                cands[cid]["maxmag"] = mag
+            if rb >= rbcut:
+                cands[cid]["numhighrb"] += 1
+
+        # ****
+        # self.response += "<ul>\n"
+        # for c in candlist:
+        #     self.response += ( "<li>{} ; Δjd={:.1f}; minmag={:.2f}; maxmag={:.2f}; numhighrb={}</li>\n"
+        #                        .format( c, cands[c]["maxjd"] - cands[c]["minjd"], cands[c]["minmag"],
+        #                                 cands[c]["maxmag"], cands[c]["numhighrb"], ) ) #cands[c]["rblist"] ) )
+        # self.response += "</ul>\n"
+        # ****
+                
+        candlist = [ c for c in candlist if ( ( cands[c]["numhighrb"] >= minrbnum ) and
+                                              ( cands[c]["minmag"] <= minmag ) and
+                                              ( cands[c]["maxmag"] >= maxmag ) and
+                                              ( cands[c]["maxjd"] - cands[c]["minjd"] >= mindays ) ) ]
+
+        self.response += "<p>After cuts, {} remain.</p>\n".format( len(candlist) )
+        sys.stderr.write( "After cuts, {} remain.\n".format( len(candlist) ) )
+        
+        self.response += "<form method=\"POST\" action=\"{}showcand\">\n".format( webapfullurl )
+        self.response += "<table class=\"candlist\">"
+        self.response += "<tr><th>Candidate</th>"
+        self.response += "<th># Det</th>"
+        self.response += "<th>rb≥{:.2f}</th>".format(rbcut)
+        self.response += "<th>dimmest</th>"
+        self.response += "<th>brightest</th>"
+        self.response += "<th>t0</th>"
+        self.response += "<th>t1</th>"
+        self.response += "<th>ltcv</th></tr>\n"
+
+        for cand in candlist:
+            if False:
+                jdlist = numpy.array( cands[cand]["jdlist"] )
+                filterlist = numpy.array( cands[cand]["filterlist"] )
+                maglist = numpy.array( cands[cand]["maglist"] )
+                rblist = numpy.array( cands[cand]["rblist"] )
+                dex = numpy.argsort( jdlist )
+                jdlist = jdlist[dex]
+                filterlist = filterlist[dex]
+                maglist = maglist[dex]
+                rblist = rblist[dex]
+                datelist = numpy.empty( jdlist.shape, dtype=numpy.str )
+                for i in range(0, len(datelist)):
+                    Y, M, D = dateofmjd( jdlist[i] )
+                    datelist[i] = "{:04n}-{:02n}-{:02n}".format( Y, M, D )
+                uniqfilt = []
+                for f in filterlist:
+                    if not ( f in uniqfilt ):
+                        uniqfilt.append( uniqfilt )
+
+            y0, m0, d0 = dateofmjd( cands[cand]["minjd"] )
+            y1, m1, d1 = dateofmjd( cands[cand]["maxjd"] )
+                        
+            self.response += ( "<tr><td><button class=\"link\" name=\"candidate\" "
+                               "value=\"{cand}\">{cand}</button></td>".format( cand=cand ) )
+            self.response += "<td>{}</td>".format( cands[cand]["numobj"] )
+            self.response += "<td>{}</td>".format( cands[cand]["numhighrb"] )
+            self.response += "<td>{:.2f}</td>".format( cands[cand]["maxmag"] )
+            self.response += "<td>{:.2f}</td>".format( cands[cand]["minmag"] )
+            self.response += "<td>{:04n}-{:02n}-{:02n}</td>".format( y0, m0, d0 )
+            self.response += "<td>{:04n}-{:02n}-{:02n}</td>".format( y1, m1, d1 )
+            if False:
+                self.response += "<td><table class=\"ltcv\">\n  <tr>"
+                for f in uniqfilt:
+                    self.response += "<th>{}</th>".format(f)
+                self.response += "<tr>\n"
+                for f in uniqfilt:
+                    self.response += "    <td><table class=\"ltcvf\">\n"
+                    for i in range(0, len(datelist)):
+                        if filterlist[i] == f:
+                            self.response += "      <tr><td>{}</td><td>{:.02f}</td></tr>\n".format( datelist[i],
+                                                                                                    maglist[i] )
+                    self.response += "    </table></td>\n"
+                self.response += "  </tr>\n</td>"
+            self.response += "</tr>\n"
+
+        self.htmlbottom()
+        return self.response
+    
 # ======================================================================
     
 class ListExposures(HandlerBase):
@@ -141,6 +335,11 @@ class ListExposures(HandlerBase):
         mjd0 = mjd( t0.year, t0.month, t0.day, t0.hour, t0.minute, t0.second )
         mjd1 = mjd( t1.year, t1.month, t1.day, t1.hour, t1.minute, t1.second )
 
+        # self.response += "<p>{} is {},{},{},{},{} and mjd {}</p>\n".format( date0, t0.year, t0.month, t0.day,
+        #                                                                     t0.hour, t0.minute, mjd0 )
+        # self.response += "<p>{} is {},{},{},{},{} and mjd {}</p>\n".format( date1, t1.year, t1.month, t1.day,
+        #                                                                     t1.hour, t1.minute, mjd1 )
+        
         self.response += '<form method=\"POST\" action=\"{}\">\n'.format( webapfullurl )
         self.response += '<input type=\"hidden\" name=\"date0\" value=\"{}\">\n'.format( date0 )
         self.response += '<input type=\"hidden\" name=\"date1\" value=\"{}\">\n'.format( date1 )
@@ -154,7 +353,7 @@ class ListExposures(HandlerBase):
         
         # sys.stderr.write("ListExposures about to send DB query\n")
         cursor = self.db.cursor( )
-        query = ( "SELECT e.filename,e.filter,COUNT(s.id),header->"EXPTIME" FROM exposures e "
+        query = ( "SELECT e.filename,e.filter,COUNT(s.id) FROM exposures e "
                   "LEFT JOIN subtractions s ON s.exposure_id=e.id "
                   "WHERE e.mjd>=%s AND e.mjd<=%s"
                   "GROUP BY e.filename,e.filter,e.mjd "
@@ -163,7 +362,7 @@ class ListExposures(HandlerBase):
         rows = cursor.fetchall()
         for row in rows:
             exporder.append( row[0] )
-            exposures[ row[0] ] = { "filter": row[1], "nsubs": row[2], "exptime": row[3] }
+            exposures[ row[0] ] = { "filter": row[1], "nsubs": row[2] }
 
         if len(exporder) == 0:
             self.response += "<p>No exposures!</p>\n"
@@ -171,7 +370,7 @@ class ListExposures(HandlerBase):
             cursor.close()
             return self.response
             
-        query = ( "SELECT filename,ra,dec FROM exposures WHERE filename IN %s" )
+        query = ( "SELECT filename,ra,dec,header->'EXPTIME' FROM exposures WHERE filename IN %s" )
         # sys.stderr.write( "{}\n".format( cursor.mogrify( query, ( tuple(exporder), ) ) ) )
         cursor.execute( query, ( tuple(exporder), ) )
         rows = cursor.fetchall()
@@ -181,6 +380,7 @@ class ListExposures(HandlerBase):
                                  .format( row[0] ))
             exposures[ row[0] ]["ra"] = float( row[1] )
             exposures[ row[0] ]["dec"] = float( row[2] )
+            exposures[ row[0] ]["exptime"] = float( row[3] )
             
         query = ( "SELECT e.filename,COUNT(o.id) FROM OBJECTS o "
                   "INNER JOIN subtractions s ON o.subtraction_id=s.id "
@@ -522,7 +722,7 @@ class ShowExposure(HandlerBase):
     # ========================================
         
     def show_log( self, state ):
-        query = ( "SELECT p.created_at,p.ccdnum,p.running_node,p.mpi_rank,p.notes,c.description "
+        query = ( "SELECT p.created_at,p.ccdnum,p.running_node,p.mpi_rank,p.notes,c.description,p.event_id "
                   "FROM processcheckpoints p "
                   "INNER JOIN exposures e ON p.exposure_id=e.id "
                   "LEFT JOIN checkpointeventdefs c ON p.event_id=c.id "
@@ -539,13 +739,60 @@ class ShowExposure(HandlerBase):
             return
 
         self.response += "<p>Ran on {}</p>\n".format( rows[0]["running_node"] )
+
+        hassub = [False] * 64
+        hasobj = [False] * 64
+        haserr = [False] * 64
+        hasinf = [False] * 64
+        for row in rows:
+            if row["ccdnum"] == -1:
+                if row["event_id"] == 999:
+                    for i in range(0, 64):
+                        haserr[i] = True
+                if row["event_id"] == 998:
+                    for i in range(0, 64):
+                        hasinf[i] = True
+            else:
+                if row["event_id"] == 20:
+                    hassub[row["ccdnum"]] = True
+                if row["event_id"] == 27:
+                    hasobj[row["ccdnum"]] = True
+                if row["event_id"] == 999:
+                    haserr[row["ccdnum"]] = True
+                if row["event_id"] == 998:
+                    hasinf[row["ccdnum"]] = True
+
+        self.response += "<p>CCDs without subtraction: "
+        for i in range(1, 63):
+            if not hassub[i]:
+                self.response += '&nbsp;<a href="#{num}">{num}</a>&nbsp;\n'.format( num=i )
+        self.response += "</p>"
+
+        self.response += "<p>CCDs without object detection: "
+        for i in range(1, 63):
+            if not hasobj[i]:
+                self.response += '&nbsp;<a href="#{num}">{num}</a>&nbsp;\n'.format( num=i )
+        self.response += "</p>"
+
+        self.response += "<p>CCDs with errors logged: "
+        for i in range(1, 63):
+            if haserr[i]:
+                self.response += '&nbsp;<a href="#{num}">{num}</a>&nbsp;\n'.format( num=i )
+        self.response += "</p>"
+        
+        self.response += "<p>CCDs with info logged: "
+        for i in range(1, 63):
+            if hasinf[i]:
+                self.response += '&nbsp;<a href="#{num}">{num}</a>&nbsp;\n'.format( num=i )
+        self.response += "</p>"
+        
         
         self.response += "<p>Jump to CCD:\n"
-        for i in range(1, 61):
-            self.response+='&nbsp;<a href="#{num}">{num}</a>&nbsp;\n'.format( num=i )
+        for i in range(1, 63):
+            self.response += '&nbsp;<a href="#{num}">{num}</a>&nbsp;\n'.format( num=i )
         self.response += "</p>\n"
 
-        for i in range(1, 61):
+        for i in range(1, 63):
             self.response += "<h3 id=\"{num}\">CCD {num}</h3>\n".format( num=i  )
 
             self.response += "<table class=\"logtable\">\n"
@@ -724,6 +971,7 @@ class DumpData(HandlerBase):
 
 urls = (
     '/', "FrontPage",
+    "/findcands", "FindCandidates",
     "/listexp", "ListExposures",
     "/showexp", "ShowExposure" ,
     "/showcand", "ShowCandidate" ,

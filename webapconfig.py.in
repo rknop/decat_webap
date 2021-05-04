@@ -1,0 +1,4 @@
+webapfullurl = "@webapurl@"
+webapdirurl = "@webapdirurl@"
+webapdir = "@webapdir@"
+DBdata = "@dbdata@"
