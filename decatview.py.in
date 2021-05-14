@@ -25,8 +25,8 @@ import PIL.Image
 #   hardcode a path here.
 # web.ctx has the filename, but doesn't
 #   exist until an application's been called.
-if not "/var/www/raknop/decat/view" in sys.path:
-    sys.path.insert(0, "/var/www/raknop/decat/view")
+if not "@webapdir@" in sys.path:
+    sys.path.insert(0, "@webapdir@")
 
 from webapconfig import webapfullurl, webapdir, webapdirurl, DBdata
 from util import dtohms, dtodms, radectolb, mjd, dateofmjd
@@ -98,7 +98,7 @@ class FrontPage(HandlerBase):
         self.response += "<h2>Exposure Search</h3>\n"
         self.response += "<p>Enter dates as yyyy-mm-dd or yyyy-mm-dd hh:mm:ss or yyyy-mm-dd hh:mm:ss-05:00\n"
         self.response += "(the last one indicating a time zone that is 5 hours before UTC)."
-        self.response += "<form method=\"POST\" action=\"{}/listexp\"><p>\n".format( webapfullurl )
+        self.response += "<form method=\"POST\" action=\"{}listexp\"><p>\n".format( webapfullurl )
         self.response += "<p>List exposures from date\n";
         self.response += "<input type=\"text\" name=\"date0\" value=\"{}\">\n".format( date0 )
         self.response += "&nbsp;&nbsp;to&nbsp;&nbsp;"
@@ -107,7 +107,7 @@ class FrontPage(HandlerBase):
         self.response += "</form>\n"
 
         self.response += "<h2>Candidate Search</h3>\n"
-        self.response += "<form method=\"POST\" action=\"{}/findcands\"></p>\n".format( webapfullurl )
+        self.response += "<form method=\"POST\" action=\"{}findcands\"></p>\n".format( webapfullurl )
         self.response += "<table class=\"candsearchparams\">\n"
         self.response += "<tr><td>Min # Detections:</td>"
         self.response += ( "<td><input name=\"mindet\" type=\"number\" "
@@ -491,10 +491,10 @@ class ShowExposure(HandlerBase):
             prevarr.append( form.Hidden( key, value=value ) )
         nextarr.append( form.Button( "Next {}".format( state["numperpage"] ),
                                      type="submit",
-                                     formaction="{}/showexp".format( webapfullurl ) ) )
+                                     formaction="{}showexp".format( webapfullurl ) ) )
         nextarr.append( form.Button( "Previous {}".format( state["numperpage"] ),
                                      type="submit",
-                                     formaction="{}/showexp".format( webapfullurl ) ) )
+                                     formaction="{}showexp".format( webapfullurl ) ) )
         
         nextform = form.Form( *nextarr )
         prevform = form.Form( *prevarr )
@@ -886,7 +886,7 @@ class ShowCandidate(HandlerBase):
         self.response += "</form>\n"
 
         self.response += "<h3>Candidate: {}</h3>\n".format( state["candidate"] )
-        self.response += ( "<p>(<a href=\"{}/showcand?candidate={}\">Share Link</a>)</p>\n"
+        self.response += ( "<p>(<a href=\"{}showcand?candidate={}\">Share Link</a>)</p>\n"
                            .format( webapfullurl, state[ "candidate" ] ) )
         
         cursor = self.db.cursor( cursor_factory = psycopg2.extras.DictCursor )
@@ -915,7 +915,7 @@ class ShowCandidate(HandlerBase):
         rows = cursor.fetchall()
         cursor.close()
         
-        self.response += "<form method=\"post\" action=\"{}/showexp\"></p>\n".format( webapfullurl )
+        self.response += "<form method=\"post\" action=\"{}showexp\"></p>\n".format( webapfullurl )
 
         for key in state:
             if key != "exposure":

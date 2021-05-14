@@ -1,4 +1,4 @@
-webap = "https://c3.lbl.gov/raknop/decat/view/decatview.py/"
+webap = "@webap@";
 
 waitforresponse = function( request )
 {

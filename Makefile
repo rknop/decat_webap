@@ -3,7 +3,7 @@ URLDIR = /raknop/decat/view
 INSTALLDIR = /var/www/raknop/decat/view
 SECRETS = /home/raknop/secret/dbinfo_production.txt
 HOST_DEV = $(HOST)
-URLDIR_DEV = /raknop/decat/decat_dev/view
+URLDIR_DEV = /raknop/decat_dev/view
 INSTALLDIR_DEV = /var/www/raknop/decat_dev/view
 SECRETS_DEV = /home/raknop/secret/dbinfo.txt
 
@@ -27,11 +27,15 @@ install: webapconfig webapinstall
 
 dev: webapdevconfig webapdevinstall
 
-webapdevconfig: webapconfig.py.in
-	cat webapconfig.py.in | perl -pe 's/\@webapurl\@/$(HOST_DEVP)\/$(URLDIR_DEVP)\/decatview.py\//; s/\@webapdirurl\@/$(URLDIR_DEVP)\//; s/\@webapdir\@/$(INSTALLDIR_DEVP)/; s/\@dbdata\@/$(SECRETS_DEVP)/' > webapconfig.py
+webapdevconfig: webapconfig.py.in decatview.js.in
+	cat webapconfig.py.in | perl -pe 's/\@webapurl\@/$(HOST_DEVP)$(URLDIR_DEVP)\/decatview.py\//; s/\@webapdirurl\@/$(URLDIR_DEVP)\//; s/\@webapdir\@/$(INSTALLDIR_DEVP)/; s/\@dbdata\@/$(SECRETS_DEVP)/' > webapconfig.py
+	cat decatview.js.in | perl -pe 's/\@webap\@/$(HOST_DEVP)$(URLDIR_DEVP)\/decatview.py\//' > decatview.js
+	cat decatview.py.in | perl -pe 's/\@webapdir\@/$(INSTALLDIR_DEVP)/' > decatview.py
 
-webapconfig: webapconfig.py.in
-	cat webapconfig.py.in | perl -pe 's/\@webapurl\@/$(HOSTP)\/$(URLDIRP)\/decatview.py\//; s/\@webapdirurl\@/$(URLDIRP)\//; s/\@webapdir\@/$(INSTALLDIRP)/; s/\@dbdata\@/$(SECRETSP)/' > webapconfig.py
+webapconfig: webapconfig.py.in decatview.js.in
+	cat webapconfig.py.in | perl -pe 's/\@webapurl\@/$(HOSTP)$(URLDIRP)\/decatview.py\//; s/\@webapdirurl\@/$(URLDIRP)\//; s/\@webapdir\@/$(INSTALLDIRP)/; s/\@dbdata\@/$(SECRETSP)/' > webapconfig.py
+	cat decatview.js.in | perl -pe 's/\@webap\@/$(HOSTP)$(URLDIRP)\/decatview.py\//' > decatview.js
+	cat decatview.py.in | perl -pe 's/\@webapdir\@/$(INSTALLDIRP)/' > decatview.py
 
 webapdevinstall: $(patsubst %, $(INSTALLDIR_DEV)/%, $(toinstall))
 
