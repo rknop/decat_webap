@@ -78,6 +78,17 @@ def dtodms( degrees ):
     secs = int( math.floor( ((degrees-degs)*60 - mins) * 600 + 0.5 ) ) / 10.
     return "{:1s}{:02d}:{:02d}:{:04.1f}".format(sign, degs, mins, secs)
 
+def parsedms( val ):
+    parser = re.compile( '([\+\-−]?) *([0-9]+)\s*:?\s*([0-9]+)\s*:?\s*([0-9]+)' )
+    match = parser.search( val )
+    if match is None:
+        return None
+    sgn = match.group(1)
+    val = float(match.group(2)) + float(match.group(3))/60. + float(match.group(4))/3600.
+    if sgn in ['-', '−' ]:
+        val *= -1
+    return val
+    
 def radectolb( ra, dec ):
     """ra and dec in degrees"""
     decngp = 27.12825 * math.pi/180.

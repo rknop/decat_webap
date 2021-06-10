@@ -44,11 +44,14 @@ get_show_exp_data = function( exposure )
 {
     var data = {};
     data.ccds = document.getElementById("ccds").value;
-    data.orderby = document.getElementById("real/bogus").value;
-    data.showrb = document.getElementById("showrb").value;
-    data.offset = document.getElementById("offset").value;
-    data.date0 = document.getElementById("date0").value;
-    data.date1 = document.getElementById("date1").value;
+    data.showrb = document.getElementById("showrb0").value; // Extra 0 from how I do ids with web.form.Input
+    data.offset = document.getElementById("offset0").value; //  "    "  "    "  " "   "   "    "   
+    data.date0 = document.getElementById("date00").value;   //  "    "  "    "  " "   "   "    "   
+    data.date1 = document.getElementById("date10").value;   //  "    "  "    "  " "   "   "    "   
+    let orderbys = document.getElementsByName("orderby");
+    for ( let elem in orderbys )
+        if ( ( elem.type == "radio" ) && ( elem.checked ) )
+             data.orderby = elem.value;
     data.exposure = exposure;
     return data;
 }

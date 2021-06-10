@@ -29,7 +29,7 @@ if not "@webapdir@" in sys.path:
     sys.path.insert(0, "@webapdir@")
 
 from webapconfig import webapfullurl, webapdir, webapdirurl, DBdata
-from util import dtohms, dtodms, radectolb, mjd, dateofmjd
+from util import dtohms, dtodms, radectolb, mjd, dateofmjd, parsedms, sanitizeHTML
 
 # sys.stderr.write("About to import astropy\n")
 # s.environ["XDG_CONFIG_HOME"] = "/var/www/astropy"
@@ -45,6 +45,7 @@ from util import dtohms, dtodms, radectolb, mjd, dateofmjd
 class HandlerBase(object):
     def __init__(self):
         self.response = ""
+        self.idordinal = 0
         
         with open(DBdata) as ifp:
             user = ifp.readline().strip()
@@ -63,7 +64,7 @@ class HandlerBase(object):
         
     def htmltop(self):
         self.response = "<!DOCTYPE html>\n"
-        self.response += "<html>\n<head>\n<meta charset=\"UTF-8\">\n"
+        self.response += "<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\">\n"
         self.response += "<link rel=\"stylesheet\" href=\"{}decat.css\">\n".format( webapdirurl )
         self.response += "<script src=\"{}decatview.js\"></script>\n".format( webapdirurl )
         self.response += "<title>DECaT LBL Pipeline Candidate Viewer</title>\n"
@@ -71,6 +72,58 @@ class HandlerBase(object):
 
     def htmlbottom(self):
         self.response += "\n</body>\n</html>\n"
+
+    def hidden_state( self, omit=[] ):
+        for val in self.state:
+            if not val in omit:
+                self.response += form.Input( name=val, id="{}{}".format( val, self.idordinal ),
+                                             type="hidden", value=self.state[val] ).render() + "\n"
+        self.idordinal += 1
+                
+    def back_to_home( self, omit=[] ):
+        self.response += '<form method=\"POST\" action=\"{}\">\n'.format( webapfullurl )
+        self.hidden_state( omit=omit )
+        self.response += "<p><button class=\"link\" type=\"submit\">Back to Home</button></p>\n"
+        self.response += "</form>\n"
+                
+    def set_state( self ):
+        # Ugh.  All state for all different pages.  Ugly.
+        # Rob, do this better.  Maybe.
+        self.state = { "date0": "",
+                       "date1": "",
+                       "onlygallat": False,
+                       "gallatincexc": "exc",
+                       "minb": -20,
+                       "maxb": 20,
+                       "offset": 0,
+                       "numperpage": 100,
+                       "exposure": "",
+                       "orderby": "real/bogus",
+                       "ccds": "",
+                       "showrb": False,
+                       "whattodo": "Show Objects",        # ROB THINK ABOUT THIS
+                       "mindet": 5,
+                       "rbcut": 0.6,
+                       "minrb": 5,
+                       "numdays": 3,
+                       "minmag": 25,
+                       "maxmag": 15,
+                       "limitbyradec": False,
+                       "raformat": "hms",
+                       "ra": "",
+                       "decformat": "dms",
+                       "dec": "",
+                       "searchunit": "arcsec",
+                       "searchradius": "",
+                       "ccds": "",
+                       "orderby": "real/bogus",
+                       "showrb": True,
+        }
+        self.webinput = web.input()
+        for stateval in self.state:
+            if stateval in self.webinput:
+                self.state[stateval] = self.webinput[stateval]
+        
         
     def GET( self ):
         response = self.do_the_things()
@@ -88,11 +141,8 @@ class FrontPage(HandlerBase):
     def do_the_things(self):
         web.header('Content-Type', 'text/html; charset="UTF-8"')
         self.htmltop()
+        self.set_state()
 
-        data = web.input()
-        date0 = data["date0"] if "date0" in data else ""
-        date1 = data["date1"] if "date1" in data else ""
-        
         self.response += "<h1>DECAT subtraction viewer</h1>\n"
 
         self.response += "<h2>Exposure Search</h3>\n"
@@ -100,35 +150,63 @@ class FrontPage(HandlerBase):
         self.response += "(the last one indicating a time zone that is 5 hours before UTC)."
         self.response += "<form method=\"POST\" action=\"{}listexp\"><p>\n".format( webapfullurl )
         self.response += "<p>List exposures from date\n";
-        self.response += "<input type=\"text\" name=\"date0\" value=\"{}\">\n".format( date0 )
-        self.response += "&nbsp;&nbsp;to&nbsp;&nbsp;"
-        self.response += "<input type=\"text\" name=\"date1\" value=\"{}\"></p>\n".format( date1 )
-        self.response += "<p><input type=\"submit\" name=\"submit\" value=\"List Exposures\"></p>\n"
-        self.response += "</form>\n"
+        self.response += form.Input( name="date0", value=self.state["date0"], type="text" ).render()
+        self.response += "\n&nbsp;&nbsp;to&nbsp;&nbsp;\n"
+        self.response += form.Input( name="date1", value=self.state["date1"], type="text" ).render() + "</p>\n"
+        self.response += "<p>" + form.Checkbox( name="onlygallat", value=self.state["onlygallat"] ).render()
+        self.response += form.Dropdown( name="gallatincexc", args=[ ("inc","Only Include"),
+                                                                    ("exc", "Exclude") ],
+                                        value=self.state["gallatincexc"] ).render()
+        self.response += "&nbsp;galactic latitude between&nbsp;"
+        self.response += form.Input( name="minb", type="text", size="4", value=self.state["minb"] ).render()
+        self.response += "°&nbsp;and&nbsp;"
+        self.response += form.Input( name="maxb", type="text", size="4", value=self.state["maxb"] ).render()
+        self.response += "°</p>\n<p>"
+        self.response += form.Input( name="submit", type="submit", value="List Exposures" ).render()
+        self.response += "</p>\n</form>\n"
 
         self.response += "<h2>Candidate Search</h3>\n"
         self.response += "<form method=\"POST\" action=\"{}findcands\"></p>\n".format( webapfullurl )
         self.response += "<table class=\"candsearchparams\">\n"
-        self.response += "<tr><td>Min # Detections:</td>"
-        self.response += ( "<td><input name=\"mindet\" type=\"number\" "
-                           "min=\"1\" max=\"1000\" step=\"1\" value=\"5\"></td></tr>\n" )
-        self.response += "<tr><td>Min # rb≥"
-        self.response += ( "<input name=\"rbcut\" type=\"number\" min=\"0\" max=\"1\" step=\"any\" "
-                           "size=\"4\" value=\"0.6\"></td>" )
-        self.response += ( "<td><input name=\"minrb\" type=\"number\" min=\"0\" max=\"1000\" step=\"1\" "
-                           "value=\"5\"></td></tr>\n" )
-        self.response += "<tr><td>Min diff. days detected:</td>"
-        self.response += ( "<td><input name=\"numdays\" type=\"number\" min=\"0\" max=\"1000\" step=\"1\" "
-                           "value=\"3\"></td></tr>\n" )
-        self.response += "<tr><td>Min (brightest) mag ≤</td>"
-        self.response += ( "<td><input name=\"minmag\" type=\"number\" min=\"15\" max=\"30\" step=\"0.1\" "
-                           "value=\"25\"></td></tr>\n" )
-        self.response += "<tr><td>Max (dimmest) mag ≥</td>"
-        self.response += ( "<td><input name=\"maxmag\" type=\"number\" min=\"15\" max=\"30\" step=\"0.1\" "
-                           "value=\"15\"></td></tr>\n" )
-        self.response += "<tr><td><input name=\"submit\" type=\"submit\" value=\"Search\"></td></tr>"
-        self.response += "</table>\n</form>\n"
-        
+        self.response += "<tr><td>Min # Detections:</td><td>"
+        self.response += form.Input( name="mindet", type="number",
+                                     min="1", max="1000", step="1", value=self.state["mindet"] ).render()
+        self.response += "</td></tr>\n<tr><td>Min # rb≥"
+        self.response += form.Input( name="rbcut", type="number", min="0", max="1",
+                                     step="any", size="4", value=self.state["rbcut"] ).render()
+        self.response += "</td><td>"
+        self.response += form.Input( name="minrb", type="number", min="0", max="1000",
+                                     step="1", value=self.state["minrb"] ).render()
+        self.response += "</td></tr>\n<tr><td>Min diff. days detected:</td><td>"
+        self.response += form.Input( name="numdays", type="number", min="0", max="1000",
+                                     step="1", value=self.state["numdays"] ).render()
+        self.response += "</td></tr>\n<tr><td>Min (brightest) mag ≤</td><td>"
+        self.response += form.Input( name="minmag", type="number", min="15", max="30",
+                                     step="0.1", value=self.state["minmag"] ).render()
+        self.response += "</td></tr>\n<tr><td>Max (dimmest) mag ≥</td><td>"
+        self.response += form.Input( name="maxmag", type="number", min="15", max="30",
+                                     step="0.1", value=self.state["maxmag"] ).render()
+        self.response += "</td></tr>\n<tr><td>Limit by RA/Dec?</td><td class=\"left\">"
+        self.response += form.Input( name="limitbyradec", type="checkbox", value=self.state["limitbyradec"] ).render()
+        self.response += "</td></tr>\n<tr><td>RA ("
+        self.response += form.Dropdown( name="raformat", value=self.state["raformat"],
+                                        args=[ ("hms","h:m:s"), ("decimalhrs", "decimal hrs"),
+                                               ("decimaldeg", "decimal deg") ] ).render()
+        self.response += "):</td><td>"
+        self.response += form.Input( name="ra", type="text", value=self.state["ra"] ).render()
+        self.response += "</td></tr>\n<tr><td>Dec ("
+        self.response += form.Dropdown( name="decformat", value=self.state["decformat"],
+                                        args=[ ("dms","d:m:s"), ("decimaldeg", "decimal °") ] ).render()
+        self.response += "):</td><td>"
+        self.response += form.Input( name="dec", type="text", value=self.state["dec"] ).render()
+        self.response += "</td></tr>\n<tr><td>Search radius in "
+        self.response += form.Dropdown( name="searcunit", value=self.state["searchunit"],
+                                        args=[ ("arcsec", "″"), ("arcmin", "′"), ("degree", "°") ] ).render()
+        self.response += "</td><td>: "
+        self.response += form.Input( name="searchradius", type="text", value=self.state["searchradius"] ).render()
+        self.response += "</td></tr>\n<tr><td>"
+        self.response += form.Input( name="submit", type="submit", value="Search" ).render()
+        self.response += "</td></tr>\n</table>\n</form>\n"
         
         self.htmlbottom()
         return self.response
@@ -139,32 +217,86 @@ class FindCandidates(HandlerBase):
     def do_the_things(self):
         web.header('Content-Type', 'text/html; charset="UTF-8"')
         self.htmltop()
+        self.set_state()
         
-        data = web.input()
-        minnum = int( data["mindet"] )
-        rbcut = float( data["rbcut"] )
-        minrbnum = int( data["minrb"] )
-        mindays = int( data["numdays"] )
-        minmag = float( data["minmag"] )
-        maxmag = float( data["maxmag"] )
+        minnum = int( self.state["mindet"] )
+        rbcut = float( self.state["rbcut"] )
+        minrbnum = int( self.state["minrb"] )
+        mindays = int( self.state["numdays"] )
+        minmag = float( self.state["minmag"] )
+        maxmag = float( self.state["maxmag"] )
+        useradec = self.state["limitbyradec"]
+        raformat = self.state["raformat"]
+        rastr = self.state["ra"]
+        decformat = self.state["decformat"]
+        decstr = self.state["dec"]
+        radformat = self.state["searchunit"]
+        radius = float( self.state["searchradius"] )
 
-        self.response += "<p><a href=\"{}\">Back to Home</a></p>\n".format( webapfullurl )
+        self.back_to_home()
 
+        if useradec:
+            try:
+                if raformat == "hms":
+                    ra = parsedms( rastr )
+                    if ra is None:
+                        raise ValueError( "Error parsing RA." )
+                    ra = 15. * ra
+                elif raformat == "decimalhrs":
+                    ra = 15. * float( rastr )
+                elif raformat == "decimaldeg":
+                    ra = float(rastr)
+                else:
+                    raise ValueError( "Unknown RA format \"" + sanitizeHTML( raformat, True ) + "\"" )
+            except Exception as e:
+                self.response += ( "<p>Error parsing RA: " + sanitizeHTML( rastr, True ) + " as " +
+                                   sanitizeHTML( raformat, True) + "</p>" )
+                self.htmlbottom()
+                return self.response
+            try:
+                if decformat == "dms":
+                    dec = parsedms( decstr )
+                    if dec is None:
+                        raise ValueError( "Error parsing Dec." )
+                elif decformat == "decimaldeg":
+                    dec = float( decstr )
+                else:
+                    raise ValueError( "Unknown Dec format \"" + sanitizeHTML( decformat, True ) + "\"" )
+            except Exception as e:
+                self.response += ( "<p>Error parsing Dec: " + sanitizeHTML( decstr, True ) + " as " +
+                                   sanitizeHTML( decformat, True) + "</p>" )
+                self.htmlbottom()
+                return self.response
+            if radformat == "arcmin":
+                radius /= 60.
+                radstr = "′"
+            elif radformat == "arcsec":
+                radius /= 3600.
+                radstr = "″"
+            else:
+                radstr = "°"
+            radecquerystr = 'WHERE q3c_radial_query(c.ra,c.dec,{},{},{}) '.format( ra, dec, radius )
+            responsestr = ' within {:.04f}° of ({:.4f}, {:.4f})'.format( radius, ra, dec )
+        else:
+            radecquerystr = ''
+            responsestr = ''
+                
         self.response += ( "<h4>Candidates with ≥{} detections (≥{} with rb≥{:.2f})<br>\n"
                            .format( minnum, minrbnum, rbcut ) )
-        self.response += ( "seen at ≥{} days apart with brightest mag. ≤{:.2f} and dimmest mag. ≥{:.2f}</h4>\n"
-                           .format( mindays, minmag, maxmag ) )
+        self.response += ( "seen at ≥{} days apart with brightest mag. ≤{:.2f} and dimmest mag. ≥{:.2f}{}</h4>\n"
+                           .format( mindays, minmag, maxmag, responsestr ) )
                            
         cursor = self.db.cursor( cursor_factory = psycopg2.extras.DictCursor )
 
         # One early days check suggested this returned 1/20 of the whole candidates table
         query = ( "SELECT c.id,count(o.id) AS countobj,max(o.rb) AS maxrb "
                   "FROM candidates c "
-                  "INNER JOIN objects o ON o.candidate_id=c.id "
-                  "GROUP BY (c.id) "
-                  "HAVING count(o.id)>=%s AND max(o.rb)>=%s "
-                  "ORDER BY c.id " )
-        # sys.stderr.write( "Sending query {}\n".format( cursor.mogrify( query, (minnum,rbcut) ) ) )
+                  "INNER JOIN objects o ON o.candidate_id=c.id " )
+        query += "{}".format( radecquerystr )
+        query += ( "GROUP BY (c.id) "
+                   "HAVING count(o.id)>=%s AND max(o.rb)>=%s " 
+                   "ORDER BY c.id " )
+        sys.stderr.write( "Sending query {}\n".format( cursor.mogrify( query, (minnum,rbcut) ) ) )
         cursor.execute( query, ( minnum, rbcut ) )
         rows = cursor.fetchall()
         if len(rows) == 0:
@@ -192,7 +324,7 @@ class FindCandidates(HandlerBase):
             cands[cid]["minmag"] = 50
             cands[cid]["maxmag"] = 0
 
-        query = ( "SELECT c.id AS candid,o.id AS objid,o.rb,o.mag,e.mjd,e.filter "
+        query = ( "SELECT c.id AS candid,o.id AS objid,o.rb,o.mag,e.mjd,e.filter,c.ra,c.dec "
                   "FROM objects o "
                   "INNER JOIN subtractions s ON o.subtraction_id=s.id "
                   "INNER JOIN exposures e ON s.exposure_id=e.id "
@@ -209,10 +341,14 @@ class FindCandidates(HandlerBase):
             mag = row["mag"]
             filt = row["filter"]
             rb = row["rb"]
+            ra = row["ra"]
+            dec = row["dec"]
             cands[cid]["jdlist"].append( mjd )
             cands[cid]["filterlist"].append( filt )
             cands[cid]["maglist"].append( mag )
             cands[cid]["rblist"].append( rb )
+            cands[cid]["ra"] = ra
+            cands[cid]["dec"] = dec
             if mjd < cands[cid]["minjd"]:
                 cands[cid]["minjd"] = mjd
             if mjd > cands[cid]["maxjd"]:
@@ -242,6 +378,7 @@ class FindCandidates(HandlerBase):
         sys.stderr.write( "After cuts, {} remain.\n".format( len(candlist) ) )
         
         self.response += "<form method=\"POST\" action=\"{}showcand\">\n".format( webapfullurl )
+        self.hidden_state()
         self.response += "<table class=\"candlist\">"
         self.response += "<tr><th>Candidate</th>"
         self.response += "<th># Det</th>"
@@ -250,6 +387,8 @@ class FindCandidates(HandlerBase):
         self.response += "<th>brightest</th>"
         self.response += "<th>t0</th>"
         self.response += "<th>t1</th>"
+        self.response += "<th>ra</th>"
+        self.response += "<th>dec</th>"
         self.response += "<th>ltcv</th></tr>\n"
 
         for cand in candlist:
@@ -283,6 +422,8 @@ class FindCandidates(HandlerBase):
             self.response += "<td>{:.2f}</td>".format( cands[cand]["minmag"] )
             self.response += "<td>{:04n}-{:02n}-{:02n}</td>".format( y0, m0, d0 )
             self.response += "<td>{:04n}-{:02n}-{:02n}</td>".format( y1, m1, d1 )
+            self.response += "<td>{}</td>".format( dtohms( cands[cand]["ra"] ) )
+            self.response += "<td>{}</td>".format( dtodms( cands[cand]["dec"] ) )
             if False:
                 self.response += "<td><table class=\"ltcv\">\n  <tr>"
                 for f in uniqfilt:
@@ -307,17 +448,19 @@ class ListExposures(HandlerBase):
     def do_the_things(self):
         web.header('Content-Type', 'text/html; charset="UTF-8"')
         self.htmltop()
+        self.set_state()
         
-        data = web.input()
-        if "date0" in data and len(data["date0"].strip())>0:
-            date0 = data["date0"]
-        else:
-            date0 = "1970-01-01"
-        if "date1" in data and len(data["date1"].strip())>0:
-            date1 = data["date1"]
-        else:
-            date1 = "2999-12-31"
-
+        if len(self.state["date0"].strip()) == 0:
+            self.state["date0"] = "1970-01-01"
+        if len(self.state["date1"].strip()) == 0:
+            self.state["date1"] = "2999-12-31"
+        date0 = self.state["date0"].strip()
+        date1 = self.state["date1"].strip()
+        limitbygallat = self.state["onlygallat"]
+        excludelatrange = self.state["gallatincexc"] == "exc"
+        minb = float( self.state["minb"] )
+        maxb = float( self.state["maxb"] )
+            
         try:    
             t0 = dateutil.parser.parse( date0 )
             if t0.tzinfo is None:
@@ -339,15 +482,16 @@ class ListExposures(HandlerBase):
         #                                                                     t0.hour, t0.minute, mjd0 )
         # self.response += "<p>{} is {},{},{},{},{} and mjd {}</p>\n".format( date1, t1.year, t1.month, t1.day,
         #                                                                     t1.hour, t1.minute, mjd1 )
-        
-        self.response += '<form method=\"POST\" action=\"{}\">\n'.format( webapfullurl )
-        self.response += '<input type=\"hidden\" name=\"date0\" value=\"{}\">\n'.format( date0 )
-        self.response += '<input type=\"hidden\" name=\"date1\" value=\"{}\">\n'.format( date1 )
-        self.response += "<p><button class=\"link\" type=\"submit\">Back to Home</button></p>\n"
-        self.response += "</form>\n"
-        
-        self.response += "<h4>Exposures from {} to {}</h4>\n".format( t0.isoformat(), t1.isoformat() )
 
+        self.back_to_home()
+        
+        self.response += "<h4>Exposures from {} to {}\n".format( t0.isoformat(), t1.isoformat() )
+        if limitbygallat:
+            if excludelatrange:
+                self.response += "excluding " if excludelatrange else "with "
+            self.response += "{:.2f} ≤ b ≤ {:.2f}".format( minb, maxb )
+        self.response += "</h4>\n"
+            
         exposures = {}
         exporder = []
         
@@ -355,10 +499,18 @@ class ListExposures(HandlerBase):
         cursor = self.db.cursor( )
         query = ( "SELECT e.filename,e.filter,COUNT(s.id) FROM exposures e "
                   "LEFT JOIN subtractions s ON s.exposure_id=e.id "
-                  "WHERE e.mjd>=%s AND e.mjd<=%s"
-                  "GROUP BY e.filename,e.filter,e.mjd "
-                  "ORDER BY e.mjd" )
-        cursor.execute(query, (mjd0, mjd1) )
+                  "WHERE e.mjd>=%s AND e.mjd<=%s " )
+        if limitbygallat:
+            if excludelatrange:
+                query += "AND ( e.gallat<%s OR e.gallat>%s ) "
+            else:
+                query += "AND e.gallat>%s AND e.gallat<%s "
+                
+        query += "GROUP BY e.filename,e.filter,e.mjd,e.gallat ORDER BY e.mjd"
+        if limitbygallat:
+            cursor.execute(query, (mjd0, mjd1, minb, maxb) )
+        else:
+            cursor.execute(query, (mjd0, mjd1) )
         rows = cursor.fetchall()
         for row in rows:
             exporder.append( row[0] )
@@ -422,19 +574,14 @@ class ListExposures(HandlerBase):
             
         cursor.close()
             
-        self.response += "Number of objects per page: <input type=\"number\" name=\"numperpage\" value=100><br>\n"
+        self.response += "<p>Number of objects per page: <input type=\"number\" name=\"numperpage\" value=100><br>\n"
         self.response += "Only include ccd numbers (comma-sep): "
-        self.response += "<input type=\"text\" name=\"ccds\" id=\"ccds\" value=\"\">\n<br>\n"
-        self.response += "  Order by:\n"
-        self.response += "<input type=\"radio\" name=\"orderby\" id=\"real/bogus\" value=\"real/bogus\" checked=1>\n"
-        self.response += "  <label for=\"real/bogus\">Real/Bogus</label>\n"
-        self.response += "<input type=\"radio\" name=\"orderby\" id=\"objnum\" value=\"objnum\">\n"
-        self.response += "  <label for=\"objnum\">Object Num.</label><br>\n"
-        self.response += "<input type=\"checkbox\" id=\"showrb\" name=\"showrb\" value=\"showrb\" checked=1>\n"
-        self.response += "  <label for=\"showrb\">Show r/b?</label></p>\n"
-        self.response += "<input type=\"hidden\" name=\"offset\" id=\"offset\" value=0>\n</p>\n"
-        self.response += "<input type=\"hidden\" name=\"date0\" id=\"date0\" value={}>\n</p>\n".format(date0)
-        self.response += "<input type=\"hidden\" name=\"date1\" id=\"date1\" value={}>\n</p>\n".format(date1)
+        self.response += form.Input( name="ccds", type="text", value=self.state["ccds"] ).render()
+        self.response += "\n<br>\n  Order by:\n"
+        self.response += form.Radio( name="orderby", value=self.state["orderby"],
+                                     args=[ ("real/bogus", "Real/Bogus"), ("objnum", "ObjectNum.") ] ).render()
+        # self.hidden_state( omit=["ccds", "orderby", "showrb" ] )
+
         self.response += "<table class=\"exposurelist\">\n"
         self.response += ( "<tr><th>Exposure</th><th>Filter</th><th>t_exp</th>"
                            "<th>ra</th><th>dec</th><th>l</th><th>b</th>"
@@ -479,33 +626,34 @@ class ShowExposure(HandlerBase):
     def prevnext( self, state, numobjs ):
         nextarr = []
         prevarr = []
+        nextord = self.idordinal
+        prevord = nextord + 1
+        self.idordinal += 2
         for key in state:
             if key=="offset":
                 value = int(state["offset"]) + int(state["numperpage"])
             else:
                 value = state[key]
-            nextarr.append( form.Hidden( key, value=value ) )
+            nextarr.append( form.Hidden( key, value=value, id="{}{}".format(key, nextord) ) )
             if key=="offset":
                 value = int(state["offset"]) - int(state["numperpage"])
                 value = value if value > 0 else 0
-            prevarr.append( form.Hidden( key, value=value ) )
-        nextarr.append( form.Button( "Next {}".format( state["numperpage"] ),
+            prevarr.append( form.Hidden( key, value=value, id="{}{}".format(key, prevord) ) )
+        nextarr.append( form.Button( name="Next {}".format( state["numperpage"] ),
+                                     id="Next_{}.{}".format( state["numperpage"], self.idordinal ),
+                                     html="Next {}".format( state["numperpage"] ),
                                      type="submit",
                                      formaction="{}showexp".format( webapfullurl ) ) )
-        nextarr.append( form.Button( "Previous {}".format( state["numperpage"] ),
+        nextarr.append( form.Button( name="Previous {}".format( state["numperpage"] ),
+                                     id="Previous_{}.{}".format( state["numperpage"], self.idordinal ),
+                                     html="Previous {}".format( state["numperpage"] ),
                                      type="submit",
                                      formaction="{}showexp".format( webapfullurl ) ) )
         
         nextform = form.Form( *nextarr )
         prevform = form.Form( *prevarr )
 
-
-        self.response += "<form method=\"Post\" action=\"{}\">\n".format( webapfullurl );
-        self.response += "<input type=\"hidden\" name=\"date0\" value=\"{}\">\n".format( state[ "date0" ] )
-        self.response += "<input type=\"hidden\" name=\"date1\" value=\"{}\">\n".format( state[ "date1" ] )
-        self.response += "<p><input type=\"submit\" name=\"submit\" value=\"Back to home\" class=\"link\"></p>\n"
-        self.response += "</form>\n"
-        # self.response += "<p><a href=\"{}/\">Back to home</a></p>\n".format(webapfullurl);
+        self.back_to_home()
 
         # self.response += ( "<p>In prevnext, offset={}, numperpage={}, numobjs={}</p>\n"
         #                    .format( state["offset"], state["numperpage"], numobjs ) )
@@ -525,29 +673,15 @@ class ShowExposure(HandlerBase):
         # global rightpassword
         web.header('Content-Type', 'text/html; charset="UTF-8"')
         self.htmltop()
+        self.set_state()
 
-        state = { "date0": "",
-                  "date1": "",
-                  "offset": 0,
-                  "numperpage": 100,
-                  "exposure": "",
-                  "orderby": "real/bogus",
-                  "ccds": "",
-                  "showrb": False,
-                  "whattodo": "Show Objects",
-                  }
-        data = web.input()
-        for stateval in state:
-            if stateval in data:
-                state[stateval] = data[stateval]
-
-        sys.stderr.write( "ShowExposure data = {}, state = {}\n".format( json.dumps( data ),
-                                                                         json.dumps( stateval ) ) )
+        # sys.stderr.write( "ShowExposure webinput = {}, state = {}\n".format( json.dumps( self.webinput ),
+        #                                                                      json.dumps( self.state ) ) )
                 
-        if state["whattodo"] == "Show Objects":
-            self.show_objects( state )
-        elif state["whattodo"] == "Show Log":
-            self.show_log( state )
+        if self.state["whattodo"] == "Show Objects":
+            self.show_objects()
+        elif self.state["whattodo"] == "Show Log":
+            self.show_log()
         else:
             self.response += "<p>Unknown action {}, go back.</p>".format( state["whattodo"] )
 
@@ -556,15 +690,15 @@ class ShowExposure(HandlerBase):
 
     # ========================================
     
-    def show_objects( self, state ):
-        offset = int( state["offset"] )
+    def show_objects( self ):
+        offset = int( self.state["offset"] )
         if offset < 0: offset = 0
-        numperpage = int( state["numperpage"] )
-        filename = state["exposure"]
-        orderby = state["orderby"]
-        showrb = state["showrb"]
+        numperpage = int( self.state["numperpage"] )
+        filename = self.state["exposure"]
+        orderby = self.state["orderby"]
+        showrb = self.state["showrb"]
             
-        ccdarr = state["ccds"].split(",")
+        ccdarr = self.state["ccds"].split(",")
         if len(ccdarr) == 0: ccds = None
         else:
             ccdnums = []
@@ -600,7 +734,7 @@ class ShowExposure(HandlerBase):
         cursor.close()
         numobjs = int(row[0])
 
-        self.prevnext( state, numobjs )
+        self.prevnext( self.state, numobjs )
 
         self.response += "<h3>Exposure: {}</h3>\n".format( filename )
         self.response += "<h4>Candidates starting at offset {} out of {}</h4>\n".format( offset, numobjs )
@@ -630,10 +764,7 @@ class ShowExposure(HandlerBase):
         cursor.close()
 
         self.response += "<form method=\"POST\" action=\"{}showcand\">\n".format( webapfullurl )
-        for key in state:
-            if key != "candidate":
-                self.response += ( "<input type=\"hidden\" name=\"{}\" value=\"{}\">\n"
-                                   .format( key, state[key] ) )
+        self.hidden_state( omit=["candidate"] )
         
         self.response += "<table class=\"maintable\">\n"
         self.response += "<tr><th>Info</th><th>New</th><th>Ref</th><th>Sub</th></tr>\n"
@@ -647,14 +778,15 @@ class ShowExposure(HandlerBase):
             ccdnum = row["ccdnum"]
             filename = row["filename"]
             # good = { "knop": row[7], "nugent": row[8] }
-            scib64 = row["scijpg"]
-            refb64 = row["refjpg"]
-            diffb64 = row["diffjpg"]
+            scib64 = row["scijpg"].replace("\n","")
+            refb64 = row["refjpg"].replace("\n","")
+            diffb64 = row["diffjpg"].replace("\n","")
             
             self.response += "<tr>\n"
             self.response += "<td>Candidate: "
-            self.response += ( "<button class=\"link\" name=\"candidate\" value=\"{candid}\">{candid}</button><br>\n"
-                               .format( candid=candid ) )
+            self.response += form.Button( name="candidate", id="candidate_button_{}".format(candid),
+                                          value=candid, class_="link", html=candid ).render()
+            self.response += "<br>\n"
             if showrb:
                 self.response += "<b>rb: {:.4f}</b><br>\n".format( rb )
             self.response += u"α: {} &nbsp;&nbsp; δ: {}<br>\n".format( dtohms( ra ), dtodms( dec ) )
@@ -715,24 +847,25 @@ class ShowExposure(HandlerBase):
             #     self.response += "\n</td>\n"
 
             self.response += "</tr>\n"
-        self.response += "</table>\n"
+        self.response += "</table>\n</form>\n"
 
-        self.prevnext( state, numobjs )
+        # ROB... as is, this is going to copy element IDs.  Waaah!
+        self.prevnext( self.state, numobjs )
 
     # ========================================
         
-    def show_log( self, state ):
+    def show_log( self ):
         query = ( "SELECT p.created_at,p.ccdnum,p.running_node,p.mpi_rank,p.notes,c.description,p.event_id "
                   "FROM processcheckpoints p "
                   "INNER JOIN exposures e ON p.exposure_id=e.id "
                   "LEFT JOIN checkpointeventdefs c ON p.event_id=c.id "
                   "WHERE e.filename=%s ORDER BY p.created_at" )
         cursor = self.db.cursor( cursor_factory = psycopg2.extras.DictCursor )
-        cursor.execute( query, ( state["exposure"], ) )
+        cursor.execute( query, ( self.state["exposure"], ) )
         rows = cursor.fetchall()
         cursor.close()
 
-        self.response += "<h2>{}</h2>\n".format( state["exposure"] )
+        self.response += "<h2>{}</h2>\n".format (self.state["exposure"] )
 
         if len(rows) == 0:
             self.response += "<p>No log information.</p>\n"
@@ -863,39 +996,21 @@ class ShowCandidate(HandlerBase):
     def do_the_things( self ):
         web.header('Content-Type', 'text/html; charset="UTF-8"')
         self.htmltop()
-        data = web.input()
+        self.set_state()
 
-        # I'm typing this a second time so I know I'm Doing It Wrong
-        state = { "date0": "",
-                  "date1": "",
-                  "offset": 0,
-                  "numperpage": 100,
-                  "exposure": "",
-                  "candidate": "",
-                  "orderby": "real/bogus",
-                  "ccds": "",
-                  "showrb": False }
-        for stateval in state:
-            if stateval in data:
-                state[stateval] = data[stateval]
+        self.back_to_home()
 
-        self.response += '<form method=\"POST\" action=\"{}\">\n'.format( webapfullurl )
-        self.response += '<input type=\"hidden\" name=\"date0\" value=\"{}\">\n'.format( state[ "date0" ] )
-        self.response += '<input type=\"hidden\" name=\"date1\" value=\"{}\">\n'.format( state[ "date1" ] )
-        self.response += "<p><button class=\"link\" type=\"submit\">Back to Home</button></p>\n"
-        self.response += "</form>\n"
-
-        self.response += "<h3>Candidate: {}</h3>\n".format( state["candidate"] )
+        self.response += "<h3>Candidate: {}</h3>\n".format( self.state["candidate"] )
         self.response += ( "<p>(<a href=\"{}showcand?candidate={}\">Share Link</a>)</p>\n"
-                           .format( webapfullurl, state[ "candidate" ] ) )
+                           .format( webapfullurl, self.state[ "candidate" ] ) )
         
         cursor = self.db.cursor( cursor_factory = psycopg2.extras.DictCursor )
         query = ( "SELECT * FROM candidates WHERE id=%s" )
-        cursor.execute( query, ( state["candidate"], ) )
+        cursor.execute( query, ( self.state["candidate"], ) )
         rows = cursor.fetchall()
         if len(rows) == 0:
             self.db.close()
-            self.response += "<p>No candidate {}</p>\n".format( state["candidate"] )
+            self.response += "<p>No candidate {}</p>\n".format( self.state["candidate"] )
             self.htmlbottom()
             return self.response
         candidate = rows[0]
@@ -910,18 +1025,13 @@ class ShowCandidate(HandlerBase):
                  "INNER JOIN exposures e ON s.exposure_id=e.id "
                  "LEFT JOIN cutouts c ON c.object_id=o.id "
                  "WHERE o.candidate_id=%s ORDER BY e.mjd,e.filter" )
-        sys.stderr.write( "{}\n".format( cursor.mogrify( query, ( state["candidate"], ) ) ) )
-        cursor.execute( query, ( state["candidate"], ) )
+        sys.stderr.write( "{}\n".format( cursor.mogrify( query, ( self.state["candidate"], ) ) ) )
+        cursor.execute( query, ( self.state["candidate"], ) )
         rows = cursor.fetchall()
         cursor.close()
         
         self.response += "<form method=\"post\" action=\"{}showexp\"></p>\n".format( webapfullurl )
-
-        for key in state:
-            if key != "exposure":
-                self.response += ( "<input type=\"hidden\" name=\"{}\" value=\"{}\">\n"
-                                   .format( key, state[key] ) )
-
+        self.hidden_state( omit=["exposure"] )
         self.response += "<table class=\"maintable\">\n"
         self.response += "<tr><th>Exposure</th><th>New</th><th>Ref</th><th>Sub</th></tr>\n"
 

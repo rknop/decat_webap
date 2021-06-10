@@ -32,7 +32,22 @@ table.logtable td { border-bottom: 2px solid var(--half-faded-color);
                     padding: 2px;
                     padding-right: 1em }
 
+table.candlist { border: 2px solid black; border-spacing: 2px }
+table.candlist th { font-weight: bold;
+                    border-bottom: 2px solid black;
+                    padding: 2px;
+                    padding-left: 1ex;
+                    padding-right: 1ex;
+                  }
+table.candlist td { border-bottom: 2px solid var(--half-faded-color);
+                    border-spacing: 2px;
+                    padding: 2px;
+                    padding-left: 1ex;
+                    padding-right: 1ex;
+                  }
+
 table.candsearchparams td { text-align: right }
+table.candsearchparams td.left { text-align: left }
 
 .good { font-weight: bold; color: #00c000; }
 .bad { font-weight: bold; color: #c00000; }
