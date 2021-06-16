@@ -1,3 +1,5 @@
+// DON'T EDIT decatview.js, INSTEAD EDIT decatview.js.in
+
 webap = "@webap@";
 
 waitforresponse = function( request )

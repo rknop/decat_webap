@@ -1,6 +1,8 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
+# DON'T EDIT decatview.py, INSTEAD EDIT decatview.py.in
+
 import sys
 import math
 import os
@@ -118,8 +120,11 @@ class HandlerBase(object):
                        "ccds": "",
                        "orderby": "real/bogus",
                        "showrb": True,
+                       "candidate": ""
         }
         self.webinput = web.input()
+        # for inpval in self.webinput:
+        #     sys.stderr.write( "{} = {}\n".format( inpval, self.webinput[inpval] ) )
         for stateval in self.state:
             if stateval in self.webinput:
                 self.state[stateval] = self.webinput[stateval]
@@ -487,8 +492,7 @@ class ListExposures(HandlerBase):
         
         self.response += "<h4>Exposures from {} to {}\n".format( t0.isoformat(), t1.isoformat() )
         if limitbygallat:
-            if excludelatrange:
-                self.response += "excluding " if excludelatrange else "with "
+            self.response += "excluding " if excludelatrange else "with "
             self.response += "{:.2f} ≤ b ≤ {:.2f}".format( minb, maxb )
         self.response += "</h4>\n"
             
@@ -564,13 +568,22 @@ class ListExposures(HandlerBase):
         # Count the number that have made it through event id type "objectslogged" (27)
         query = ( "SELECT e.filename,COUNT(p.id) FROM exposures e "
                   "INNER JOIN processcheckpoints p ON e.id=p.exposure_id "
-                  "WHERE e.filename in %s AND p.event_id=27 "
+                  "WHERE e.filename IN %s AND p.event_id=27 "
                   "GROUP BY e.filename" )
         cursor.execute( query, ( tuple(exporder), ) )
         rows = cursor.fetchall()
-        cursor.close()
         for row in rows:
             exposures[ row[0] ]["nfinished"] = row[1]
+
+        # Count the number that have errors (999)
+        query = ( "SELECT e.filename,COUNT(p.id) FROM exposures e "
+                  "INNER JOIN processcheckpoints p ON e.id=p.exposure_id "
+                  "WHERE e.filename IN %s AND p.event_id=999 "
+                  "GROUP BY e.filename" )
+        cursor.execute( query, ( tuple(exporder), ) )
+        rows = cursor.fetchall()
+        for row in rows:
+            exposures[ row[0] ]["nerrors"] = row[1]
             
         cursor.close()
             
@@ -612,6 +625,8 @@ class ListExposures(HandlerBase):
                                "onclick=\"showobjects('{}')\">Show Objects</button></td>\n".format( exp ) )
             self.response += ( "  <td><button type=\"submit\" name=\"submit\" value=\"Show Log\" "
                                "onclick=\"showlog('{}')\">Show Log</button></td>\n".format( exp ) )
+            if ( "nerrors" in exposures[exp] ) and ( exposures[exp]["nerrors"] > 0 ):
+                self.response += ( "  <td class=\"bad\">{} errors</td>\n".format( exposures[exp]["nerrors"] ) )
             self.response += "</tr>\n"
             
         self.response += "</table>\n"

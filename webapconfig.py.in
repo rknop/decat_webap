@@ -1,3 +1,5 @@
+# DONT EDIT webapconfig.py, INSTEAD EDIT webapconfig.py.in
+
 webapfullurl = "@webapurl@"
 webapdirurl = "@webapdirurl@"
 webapdir = "@webapdir@"
