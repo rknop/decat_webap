@@ -7,6 +7,7 @@ import sys
 import math
 import os
 import re
+import random
 import json
 import psycopg2
 import psycopg2.extras
@@ -32,15 +33,6 @@ if not "@webapdir@" in sys.path:
 
 from webapconfig import webapfullurl, webapdir, webapdirurl, DBdata
 from util import dtohms, dtodms, radectolb, mjd, dateofmjd, parsedms, sanitizeHTML
-
-# sys.stderr.write("About to import astropy\n")
-# s.environ["XDG_CONFIG_HOME"] = "/var/www/astropy"
-# os.environ["XDG_CACHE_HOME"] = "/var/www/astropy"
-# from astropy.coordinates import SkyCoord
-# sys.stderr.write("Imported astropy\n")
-# import fitsio
-
-# rightpassword = "Lambdaneq0"
 
 # ======================================================================
 
@@ -120,7 +112,11 @@ class HandlerBase(object):
                        "ccds": "",
                        "orderby": "real/bogus",
                        "showrb": True,
-                       "candidate": ""
+                       "candidate": "",
+                       "user": None,
+                       "password": None,
+                       "vetfieldtype": None,
+                       "vetprerated": None
         }
         self.webinput = web.input()
         # for inpval in self.webinput:
@@ -128,7 +124,105 @@ class HandlerBase(object):
         for stateval in self.state:
             if stateval in self.webinput:
                 self.state[stateval] = self.webinput[stateval]
+
+
+    def objecttable( self, rows, showgoodbad=None, goodbad=None, user=None, passwd=None ):
+        self.response += "<form method=\"POST\" action=\"{}showcand\">\n".format( webapfullurl )
+        self.hidden_state( omit=["candidate"] )
         
+        self.response += "<table class=\"maintable\">\n"
+        self.response += "<tr><th>Info</th><th>New</th><th>Ref</th><th>Sub</th></tr>\n"
+        
+        for row in rows:
+            candid = row["cid"]
+            objid = row["oid"]
+            rb = row["rb"]
+            ra = row["ra"]
+            dec = row["dec"]
+            ccdnum = row["ccdnum"]
+            filename = row["filename"]
+            scib64 = row["scijpg"].replace("\n","")
+            refb64 = row["refjpg"].replace("\n","")
+            diffb64 = row["diffjpg"].replace("\n","")
+            
+            self.response += "<tr>\n"
+            self.response += "<td>Candidate: "
+            self.response += form.Button( name="candidate", id="candidate_button_{}".format(candid),
+                                          value=candid, class_="link", html=candid ).render()
+            self.response += "<br>\n"
+            if goodbad is None:
+                self.response += "<b>rb: {:.4f}</b><br>\n".format( rb )
+            self.response += u"α: {} &nbsp;&nbsp; δ: {}<br>\n".format( dtohms( ra ), dtodms( dec ) )
+            self.response += "File: {}<br>ccd: {}\n".format(filename.replace(".fz",""), ccdnum)
+
+            if scib64 is None:
+                self.response += "<td>(Sci cutout missing)</td>\n"
+            else:
+                self.response += ( "<td><img src=\"data:image/jpeg;base64,{}\" "
+                                   "width=204 height=204 alt=\"New\"></td>\n".format( scib64 ) )
+
+            if refb64 is None:
+                self.response += "<td>(Ref cutout missing)</td>\n"
+            else:
+                self.response += ( "<td><img src=\"data:image/jpeg;base64,{}\" "
+                                   "width=200 height=200 alt=\"Ref\"></td>\n".format( refb64 ) )
+
+            if diffb64 is None:
+                self.response += "<td>(Diff cutout missing)</td>\n"
+            else:
+                self.response += ( "<td><img src=\"data:image/jpeg;base64,{}\" "
+                                   "width=200 height=200 alt=\"Sub\"></td>\n".format( diffb64 ) )
+
+            if goodbad is not None:
+                isgood = False
+                isbad = False
+                if objid in goodbad:
+                    if goodbad[objid] == "good":
+                        isgood = True
+                    if goodbad[objid] == "bad":
+                        isbad = True
+                self.response += "<td>\n"
+                self.response += "<input type=\"radio\" value=\"good\" "
+                self.response += "name=\"{obj}statusset\" id=\"{obj}statusgood\" ".format( obj=objid )
+                self.response += ( "onchange=\"sendgoodbad( &quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;, "
+                                   "&quot;good&quot; )\" ".format( user, passwd, objid ) )
+                self.response += "{}>\n".format( "checked" if isgood else "" )
+                self.response += "  <label for=\"{obj}statussgood\">Good</label><br>\n".format( obj=objid )
+                self.response += "<input type=\"radio\" value='bad' "
+                self.response += "name=\"{obj}statusset\" id=\"{obj}statusbad\" ".format( obj=objid )
+                self.response += ( "onchange=\"sendgoodbad( &quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;, "
+                                   "&quot;bad&quot; )\"".format( user, passwd, objid ) )
+                self.response += "{}>\n".format( "checked" if isbad else "" )
+                self.response += "  <label for=\"{obj}statussbad\">Bad</label><br>\n".format( obj=objid )
+                self.response += "Current: "
+                if isgood:
+                    self.response += "<span id=\"{}status\" class=\"good\">Good</span>\n".format(objid)
+                elif isbad:
+                    self.response += "<span id=\"{}status\" class=\"bad\">Bad</span>\n".format(objid)
+                else:
+                    self.response += "<span id=\"{}status\"><i>(not set)</i></span>\n".format(objid)
+            self.response += "</tr>\n"
+        self.response += "</table>\n</form>\n"
+        
+    def check_scan_user( self, data ):
+        if "user" not in data:
+            rval = { "error": "No user specified" }
+            return json.dumps(rval)
+        if "password" not in data:
+            rval = { "error": "No password given" }
+            return json.dumps(rval)
+        cursor = self.db.cursor( cursor_factory = psycopg2.extras.DictCursor )
+        query = "SELECT username,password FROM scanusers WHERE username=%s"
+        cursor.execute( query, ( data["user"], ) )
+        rows = cursor.fetchall()
+        cursor.close()
+        if len(rows) == 0:
+            rval = { "error": "Unknown user {}".format( data["user"] ) }
+            return json.dumps(rval)
+        if rows[0]["password"] != data["password"]:
+            rval = { "error": "Incorrect password for {}".format( data["user"] ) }
+            return json.dumps(rval)
+        return None
         
     def GET( self ):
         response = self.do_the_things()
@@ -150,7 +244,8 @@ class FrontPage(HandlerBase):
 
         self.response += "<h1>DECAT subtraction viewer</h1>\n"
 
-        self.response += "<h2>Exposure Search</h3>\n"
+        self.response += "<hr>\n"
+        self.response += "<h2>Exposure Search</h2>\n"
         self.response += "<p>Enter dates as yyyy-mm-dd or yyyy-mm-dd hh:mm:ss or yyyy-mm-dd hh:mm:ss-05:00\n"
         self.response += "(the last one indicating a time zone that is 5 hours before UTC)."
         self.response += "<form method=\"POST\" action=\"{}listexp\"><p>\n".format( webapfullurl )
@@ -170,7 +265,8 @@ class FrontPage(HandlerBase):
         self.response += form.Input( name="submit", type="submit", value="List Exposures" ).render()
         self.response += "</p>\n</form>\n"
 
-        self.response += "<h2>Candidate Search</h3>\n"
+        self.response += "<hr>\n"
+        self.response += "<h2>Candidate Search</h2>\n"
         self.response += "<form method=\"POST\" action=\"{}findcands\"></p>\n".format( webapfullurl )
         self.response += "<table class=\"candsearchparams\">\n"
         self.response += "<tr><td>Min # Detections:</td><td>"
@@ -212,6 +308,28 @@ class FrontPage(HandlerBase):
         self.response += "</td></tr>\n<tr><td>"
         self.response += form.Input( name="submit", type="submit", value="Search" ).render()
         self.response += "</td></tr>\n</table>\n</form>\n"
+
+
+        self.response += "<hr>"
+        self.response += "<h2>Candidate Vetting</h2>\n"
+        self.response += "<form method=\"POST\" action=\"{}ratecands\"></p>\n".format( webapfullurl )
+        self.response += "<table class=\"candsearchparams\">\n"
+        self.response += "<tr><td>Username:</td><td>"
+        self.response += form.Input( name="user", type="text" ).render()
+        self.response += "</td></tr>\n"
+        self.response += "<tr><td>Password:</td><td>"
+        self.response += form.Input( name="password", type="text" ).render()
+        self.response += "</td></tr>\n"
+        self.response += "<tr><td>Type of field:</td><td class=\"left\">"
+        self.response += form.Dropdown( name="vetfieldtype", args=[ ("gal", "Galactic"),
+                                                                    ("exgal", "Extragalactic") ],
+                                        value="exgal" ).render()
+        self.response += "</td></tr>\n"
+        self.response += "<tr><td>Objects vetted by others?</td><td class=\"left\">"
+        self.response += form.Dropdown( name="vetprerated", args=[ ("yes", "Yes"), ("no", "No") ],
+                                        value="no" ).render()
+        self.response += "</td></tr>\n<tr><td>"
+        self.response += form.Input( name="submitvet", type="submit", value="Show Objects" ).render()
         
         self.htmlbottom()
         return self.response
@@ -301,7 +419,7 @@ class FindCandidates(HandlerBase):
         query += ( "GROUP BY (c.id) "
                    "HAVING count(o.id)>=%s AND max(o.rb)>=%s " 
                    "ORDER BY c.id " )
-        sys.stderr.write( "Sending query {}\n".format( cursor.mogrify( query, (minnum,rbcut) ) ) )
+        # sys.stderr.write( "Sending query {}\n".format( cursor.mogrify( query, (minnum,rbcut) ) ) )
         cursor.execute( query, ( minnum, rbcut ) )
         rows = cursor.fetchall()
         if len(rows) == 0:
@@ -646,20 +764,19 @@ class ShowExposure(HandlerBase):
         self.idordinal += 2
         for key in state:
             if key=="offset":
-                value = int(state["offset"]) + int(state["numperpage"])
+                nextvalue = int(state["offset"]) + int(state["numperpage"])
+                prevvalue = int(state["offset"]) - int(state["numperpage"])
+                prevvalue = prevvalue if prevvalue > 0 else 0
             else:
-                value = state[key]
-            nextarr.append( form.Hidden( key, value=value, id="{}{}".format(key, nextord) ) )
-            if key=="offset":
-                value = int(state["offset"]) - int(state["numperpage"])
-                value = value if value > 0 else 0
-            prevarr.append( form.Hidden( key, value=value, id="{}{}".format(key, prevord) ) )
+                nextvalue = prevvalue = state[key]
+            nextarr.append( form.Hidden( key, value=nextvalue, id="{}{}".format(key, nextord) ) )
+            prevarr.append( form.Hidden( key, value=prevvalue, id="{}{}".format(key, prevord) ) )
         nextarr.append( form.Button( name="Next {}".format( state["numperpage"] ),
                                      id="Next_{}.{}".format( state["numperpage"], self.idordinal ),
                                      html="Next {}".format( state["numperpage"] ),
                                      type="submit",
                                      formaction="{}showexp".format( webapfullurl ) ) )
-        nextarr.append( form.Button( name="Previous {}".format( state["numperpage"] ),
+        prevarr.append( form.Button( name="Previous {}".format( state["numperpage"] ),
                                      id="Previous_{}.{}".format( state["numperpage"], self.idordinal ),
                                      html="Previous {}".format( state["numperpage"] ),
                                      type="submit",
@@ -685,7 +802,6 @@ class ShowExposure(HandlerBase):
     # ========================================
         
     def do_the_things(self):
-        # global rightpassword
         web.header('Content-Type', 'text/html; charset="UTF-8"')
         self.htmltop()
         self.set_state()
@@ -698,8 +814,8 @@ class ShowExposure(HandlerBase):
         elif self.state["whattodo"] == "Show Log":
             self.show_log()
         else:
-            self.response += "<p>Unknown action {}, go back.</p>".format( state["whattodo"] )
-
+            self.response += "<p>Error, unknown whattodo \"{}\"</p>\n".format( self.state["whattodo"] )
+            
         self.htmlbottom()
         return self.response
 
@@ -711,7 +827,6 @@ class ShowExposure(HandlerBase):
         numperpage = int( self.state["numperpage"] )
         filename = self.state["exposure"]
         orderby = self.state["orderby"]
-        showrb = self.state["showrb"]
             
         ccdarr = self.state["ccds"].split(",")
         if len(ccdarr) == 0: ccds = None
@@ -744,7 +859,7 @@ class ShowExposure(HandlerBase):
             query += " AND s.ccdnum IN {} ".format(ccds)
         cursor = self.db.cursor( )
         # sys.stderr.write( "Sending query \"{}\"\n".format( cursor.mogrify( query, [ filename ] ) ) )
-        cursor.execute( query, [ filename ] )
+        cursor.execute( query, ( filename, ) )
         row = cursor.fetchone()
         cursor.close()
         numobjs = int(row[0])
@@ -778,92 +893,8 @@ class ShowExposure(HandlerBase):
         rows = cursor.fetchall()
         cursor.close()
 
-        self.response += "<form method=\"POST\" action=\"{}showcand\">\n".format( webapfullurl )
-        self.hidden_state( omit=["candidate"] )
+        self.objecttable( rows )
         
-        self.response += "<table class=\"maintable\">\n"
-        self.response += "<tr><th>Info</th><th>New</th><th>Ref</th><th>Sub</th></tr>\n"
-        
-        for row in rows:
-            candid = row["cid"]
-            objid = row["oid"]
-            rb = row["rb"]
-            ra = row["ra"]
-            dec = row["dec"]
-            ccdnum = row["ccdnum"]
-            filename = row["filename"]
-            # good = { "knop": row[7], "nugent": row[8] }
-            scib64 = row["scijpg"].replace("\n","")
-            refb64 = row["refjpg"].replace("\n","")
-            diffb64 = row["diffjpg"].replace("\n","")
-            
-            self.response += "<tr>\n"
-            self.response += "<td>Candidate: "
-            self.response += form.Button( name="candidate", id="candidate_button_{}".format(candid),
-                                          value=candid, class_="link", html=candid ).render()
-            self.response += "<br>\n"
-            if showrb:
-                self.response += "<b>rb: {:.4f}</b><br>\n".format( rb )
-            self.response += u"α: {} &nbsp;&nbsp; δ: {}<br>\n".format( dtohms( ra ), dtodms( dec ) )
-            self.response += "File: {} ccd: {}\n".format(filename.replace(".fz",""), ccdnum)
-
-            if scib64 is None:
-                self.response += "<td>(Sci cutout missing)</td>\n"
-            else:
-                # sciimg = self.pngify( scib64 )
-                # self.response += ( "<td><img src=\"data:image/jpeg;base64,{}\" width=204 height=204 alt=\"New\"></td>\n"
-                #                    .format( base64.b64encode( sciimg ).decode("ascii" ) ) )
-                self.response += ( "<td><img src=\"data:image/jpeg;base64,{}\" width=204 height=204 alt=\"New\"></td>\n"
-                                   .format( scib64 ) )
-
-            if refb64 is None:
-                self.response += "<td>(Ref cutout missing)</td>\n"
-            else:
-                self.response += ( "<td><img src=\"data:image/jpeg;base64,{}\" width=200 height=200 alt=\"Ref\"></td>\n"
-                                   .format( refb64 ) )
-
-            if diffb64 is None:
-                self.response += "<td>(Diff cutout missing)</td>\n"
-            else:
-                self.response += ( "<td><img src=\"data:image/jpeg;base64,{}\" width=200 height=200 alt=\"Sub\"></td>\n"
-                                   .format( diffb64 ) )
-
-            # if ( user == "knop" or user == "nugent" ) and passwd == rightpassword:
-            #     self.response += "<td>\n"
-            #     self.response += "<input type=\"radio\" value=\"good\" "
-            #     self.response += "name=\"{obj}statusset\" id=\"{obj}statusgood\" ".format( obj=objid )
-            #     self.response += ( "onchange=\"sendgoodbad( &quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;, "
-            #                        "&quot;good&quot; )\">\n".format( user, passwd, objid ) )
-            #     self.response += "  <label for=\"{obj}statussgood\">Good</label><br>\n"
-            #     self.response += "<input type=\"radio\" value='bad' "
-            #     self.response += "name=\"{obj}statusset\" id=\"{obj}statusbad\" ".format( obj=objid )
-            #     self.response += ( "onchange=\"sendgoodbad( &quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;, "
-            #                        "&quot;bad&quot; )\">\n".format( user, passwd, objid ) )
-            #     self.response += "  <label for=\"{obj}statussbad\">Bad</label><br>\n"
-            #     self.response += "Current: "
-            #     if good[user] is None:
-            #         self.response += "<span id=\"{}status\"><i>(not set)</i></span>\n".format(objid)
-            #     elif good[user]:
-            #         self.response += "<span id=\"{}status\">Good</span>\n".format(objid)
-            #     else:
-            #         self.response += "<span id=\"{}status\">Bad</span>\n".format(objid)
-            # else:
-            #     self.response += "<td>\n";
-            #     for user in ( "knop", "nugent" ):
-            #         self.response += "{}: ".format(user)
-            #         if good[user] is None:
-            #             self.response += "<i>(not set)</i>"
-            #         elif good[user]:
-            #             self.response += "<span class=\"good\">good</span>"
-            #         else:
-            #             self.response += "<span class=\"bad\">bad</span>"
-            #         if user == "knop":
-            #             self.response += "<br>\n"
-            #     self.response += "\n</td>\n"
-
-            self.response += "</tr>\n"
-        self.response += "</table>\n</form>\n"
-
         # ROB... as is, this is going to copy element IDs.  Waaah!
         self.prevnext( self.state, numobjs )
 
@@ -960,30 +991,31 @@ class ShowExposure(HandlerBase):
                     self.response += "</tr>\n"
 
             self.response += "</table>\n"
-        
 
 
 # ======================================================================
 
 class SetGoodBad(HandlerBase):
     def do_the_things( self ):
-        global rightpassword
         web.header('Content-Type', 'application/json')
 
         data = json.loads( web.data().decode(encoding='utf-8') )
-        if "user" not in data:
-            rval = { "error": "No user specified" }
-            return json.dumps(rval)
-        if data["user"] not in ["knop","nugent"]:
-            rval = { "error": "Unknown user {}".format(data["user"]) }
-            return json.dumps(rval)
-        if ( "password" not in data or data["password"] != rightpassword ):
-            rval = { "error": "Incorrect password" }
-            return json.dumps(rval)
-        if ( "obj" not in data ) or ( "status" not in data ):
-            rval = { "error": "Mal-formed post data" }
-            return json.dumps(rval)
+        rval = self.check_scan_user( data )
+        if rval is not None:
+            return rval
 
+        query = ( "SELECT user,password FROM scanusers WHERE username=%s" )
+        cursor = self.db.cursor( cursor_factory = psycopg2.extras.DictCursor )
+        cursor.execute( query, ( data["user"], ) )
+        rows = cursor.fetchall()
+        if len(rows) == 0:
+            rval = { "error": "No such user \"{}\"".format( data["user"] ) }
+            return json.dumps(rval)
+        if len(rows) > 1:
+            rval =  { "error": "User \"{}\" multiply defined!".format( user ) }
+        if rows[0]["password"] != data["password"]:
+            rval = { "error": "Incorrect password for {}".format(user) }
+            
         objid = int(data["obj"])
         if data["status"] == "good": goodbad = True
         elif data["status"] == "bad": goodbad = False
@@ -991,13 +1023,11 @@ class SetGoodBad(HandlerBase):
             rval = { "error": "{} is neither good nor bad".format( data["status"] ) }
             return json.dumps(rval)
 
-        # There's a bobby tables issue here, except that I've already made sure
-        #   that data["user"] is one of "knop","nugent"
-        query = ( "INSERT INTO tmpobjgood(objid,{user}good) VALUES(%s, {state}) "
-                  "ON CONFLICT ON CONSTRAINT tmpobjgood_pkey DO UPDATE SET "
-                  "{user}good={state}".format( user=data["user"], state="True" if goodbad else "False" ) )
+        pkey = "{}_{}".format( objid, data["user"] )
+        query = ( "INSERT INTO scanscore(id,object_id,username,goodbad) VALUES(%s,%s,%s,%s) "
+                  "ON CONFLICT ON CONSTRAINT scanscore_pkey DO UPDATE SET goodbad=%s" )
         cursor = self.db.cursor()
-        cursor.execute( query, [ objid ] )
+        cursor.execute( query, ( pkey, objid, data["user"], data["status"], data["status"] ) )
         self.db.commit()
         cursor.close()
 
@@ -1078,6 +1108,97 @@ class ShowCandidate(HandlerBase):
         return self.response
 
 # ======================================================================
+
+class RateCands(HandlerBase):
+    def do_the_things( self ):
+        web.header('Content-Type', 'text/html; charset="UTF-8"')
+        self.htmltop()
+        self.set_state()
+        self.back_to_home()
+
+        rval = self.check_scan_user( self.webinput )
+        if rval is not None:
+            rval = json.loads( rval )
+            self.response += "<p>Error: {}".format( rval["error"] )
+            self.htmlbottom()
+            return self.response
+
+        if self.state["vetprerated"] == "yes":
+            self.response += "<p>Vetting pre-rated candidates is not yet implemented.</p>"
+            self.htmlbottom()
+            return self.response
+
+        # Get a random selection of objects from the database
+
+        query = ( "SELECT c.id as cid,o.id as oid,o.rb,o.ra,o.dec,s.ccdnum,e.filename "
+                  "FROM OBJECTS O "
+                  "INNER JOIN candidates c ON o.candidate_id=c.id "
+                  "INNER JOIN subtractions s ON o.subtraction_id=s.id "
+                  "INNER JOIN exposures e ON s.exposure_id=e.id " )
+        if self.state["vetfieldtype"] == "gal":
+            query += "WHERE e.gallat < 20 AND e.gallat > -20"
+        else:
+            query += "WHERE e.gallat >= 20 OR e.gallat <= -20"
+        cursor = self.db.cursor( cursor_factory = psycopg2.extras.DictCursor )
+        cursor.execute( query )
+        objects = cursor.fetchall()
+
+        # It feels a little profligate to me to get tens of millions of
+        # objects from the database and then only to keep 100.  I'm a
+        # little queasy about randomly shuffling joins like this within
+        # SQL, however, so whatever.
+        
+        random.shuffle( objects )
+        objects = [ dict(o) for o in objects[0:100] ]
+        oids = [ o["oid"] for o in objects ]
+        objdict = {}
+        for obj in objects:
+            obj["scijpg"] = None
+            obj["refjpg"] = None
+            obj["diffjpg"] = None
+            objdict[ obj["oid"] ] = obj
+
+        query = ( "SELECT o.id as oid, "
+                  "ENCODE(cu.sci_jpeg, 'base64') as scijpg, "
+                  "ENCODE(cu.ref_jpeg, 'base64') as refjpg, "
+                  "ENCODE(cu.diff_jpeg, 'base64') as diffjpg "
+                  "FROM cutouts cu INNER JOIN objects o ON cu.object_id=o.id "
+                  "WHERE o.id IN %s" )
+        sys.stderr.write( "Sending query {}\n".format( cursor.mogrify( query, ( tuple(oids), ) ) ) )
+        cursor.execute( query, ( tuple(oids), ) )
+        rows = cursor.fetchall()
+        for row in rows:
+            oid = row["oid"]
+            if not oid in objdict:
+                sys.stderr.write( "WARNING: {} in cutouts query but not object list!\n".format( row["oid"] ) )
+            else:
+                objdict[oid]["scijpg"] = row["scijpg"]
+                objdict[oid]["refjpg"] = row["refjpg"]
+                objdict[oid]["diffjpg"] = row["diffjpg"]
+
+        query = ( "SELECT object_id,goodbad FROM scanscore WHERE username=%s AND object_id IN %s" )
+        cursor.execute( query, ( self.webinput["user"], tuple(oids) ) )
+        rows = cursor.fetchall()
+        goodbad = {}
+        for row in rows:
+            goodbad[ row["object_id"] ] = row["goodbad"]
+
+        self.response += '<form method=\"POST\" action=\"{}ratecands\">\n'.format( webapfullurl )
+        self.hidden_state()
+        self.response += "<p><button type=\"submit\">Give Me More</button></p>\n"
+        self.response += "</form>"
+            
+        self.objecttable( objects, goodbad=goodbad, user=self.webinput["user"], passwd=self.webinput["password"] )
+        
+        self.response += '<form method=\"POST\" action=\"{}ratecands\">\n'.format( webapfullurl )
+        self.hidden_state()
+        self.response += "<p><button type=\"submit\">Give Me More</button></p>\n"
+        self.response += "</form>"
+            
+        self.htmlbottom()
+        return self.response
+
+# ======================================================================
     
 class DumpData(HandlerBase):
     def do_the_things( self ):
@@ -1100,8 +1221,9 @@ urls = (
     "/listexp", "ListExposures",
     "/showexp", "ShowExposure" ,
     "/showcand", "ShowCandidate" ,
-    "/dumpdata", "DumpData" ,
+    "/ratecands", "RateCands",
     "/setgoodbad", "SetGoodBad" ,
+    "/dumpdata", "DumpData" ,
     )
 
 application = web.application(urls, globals()).wsgifunc()

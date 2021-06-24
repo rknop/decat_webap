@@ -5,7 +5,7 @@ SECRETS = /home/raknop/secret/dbinfo_production.txt
 HOST_DEV = $(HOST)
 URLDIR_DEV = /raknop/decat_dev/view
 INSTALLDIR_DEV = /var/www/raknop/decat_dev/view
-SECRETS_DEV = /home/raknop/secret/dbinfo.txt
+SECRETS_DEV = /home/raknop/secret/dbinfo_dev.txt
 
 # SECRETDIR = /home/raknop/secret
 

@@ -108,7 +108,8 @@ sendgoodbad = function( user, password, obj, goodbad )
 
 echogoodbad = function( statedata ) {
     var id = statedata["objid"] + "status";
-    console.log( "Looking for element " + id );
+    // console.log( "Looking for element " + id );
     elem = document.getElementById(id);
     elem.innerHTML = statedata["status"];
+    elem.setAttribute("class", statedata["status"]);
 }
