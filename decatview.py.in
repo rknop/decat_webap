@@ -89,6 +89,7 @@ class HandlerBase(object):
                        "gallatincexc": "exc",
                        "minb": -20,
                        "maxb": 20,
+                       "showvetting": False,
                        "offset": 0,
                        "numperpage": 100,
                        "exposure": "",
@@ -126,7 +127,22 @@ class HandlerBase(object):
                 self.state[stateval] = self.webinput[stateval]
 
 
-    def objecttable( self, rows, showgoodbad=None, goodbad=None, user=None, passwd=None ):
+    def objecttable( self, rows, showvetting=False, goodbad=None, user=None, passwd=None ):
+
+        setallunsetbadbutton = ""
+        if goodbad is not None:
+            notgoodbadset = []
+            for row in rows:
+                if not row["oid"] in goodbad:
+                    notgoodbadset.append( str(row["oid"]) )
+            setallunsetbadbutton = "<p>"
+            setallunsetbadbutton += form.Button( name="makethingsbad", html="Make All Unset Bad",
+                                                 onclick="setallbad(\"{}\", \"{}\", [{}])"
+                                                 .format( user, passwd, ",".join(notgoodbadset) ) ).render()
+            setallunsetbadbutton += "</p>"
+
+        self.response += setallunsetbadbutton
+            
         self.response += "<form method=\"POST\" action=\"{}showcand\">\n".format( webapfullurl )
         self.hidden_state( omit=["candidate"] )
         
@@ -162,6 +178,7 @@ class HandlerBase(object):
                                    "width=204 height=204 alt=\"New\"></td>\n".format( scib64 ) )
 
             if refb64 is None:
+
                 self.response += "<td>(Ref cutout missing)</td>\n"
             else:
                 self.response += ( "<td><img src=\"data:image/jpeg;base64,{}\" "
@@ -201,8 +218,24 @@ class HandlerBase(object):
                     self.response += "<span id=\"{}status\" class=\"bad\">Bad</span>\n".format(objid)
                 else:
                     self.response += "<span id=\"{}status\"><i>(not set)</i></span>\n".format(objid)
+
+            elif showvetting and ( "vetting" in row ):
+                self.response += "<td class=\"vettinglist\">"
+                first = True
+                for username, score in row["vetting"].items():
+                    if first:
+                        first = False
+                    else:
+                        self.response += "<br>"
+                    self.response += "{username}: <span class=\"{score}\">{score}</span>".format( username=username,
+                                                                                                  score=score )
+                self.response += "</td>"
+                    
             self.response += "</tr>\n"
         self.response += "</table>\n</form>\n"
+
+        self.response += setallunsetbadbutton
+
         
     def check_scan_user( self, data ):
         if "user" not in data:
@@ -711,7 +744,11 @@ class ListExposures(HandlerBase):
         self.response += "\n<br>\n  Order by:\n"
         self.response += form.Radio( name="orderby", value=self.state["orderby"],
                                      args=[ ("real/bogus", "Real/Bogus"), ("objnum", "ObjectNum.") ] ).render()
-        # self.hidden_state( omit=["ccds", "orderby", "showrb" ] )
+        self.response += "\n<br>\n"
+        self.response += form.Checkbox( id="showvetting", name="showvetting",
+                                        value=self.state["showvetting"] ).render()
+        self.response += " show manual vetting?</p>\n<p>"
+        # self.hidden_state( omit=["ccds", "orderby", "showrb", "showvetting" ] )
 
         self.response += "<table class=\"exposurelist\">\n"
         self.response += ( "<tr><th>Exposure</th><th>Filter</th><th>t_exp</th>"
@@ -827,7 +864,8 @@ class ShowExposure(HandlerBase):
         numperpage = int( self.state["numperpage"] )
         filename = self.state["exposure"]
         orderby = self.state["orderby"]
-            
+        showvetting = self.state["showvetting"]
+        
         ccdarr = self.state["ccds"].split(",")
         if len(ccdarr) == 0: ccds = None
         else:
@@ -893,9 +931,25 @@ class ShowExposure(HandlerBase):
         rows = cursor.fetchall()
         cursor.close()
 
-        self.objecttable( rows )
+        objects = [ dict(row) for row in rows ]
+        oids = [ o["oid"] for o in objects ]
+        objdict = {}
+        for obj in objects:
+            objdict[obj["oid"]] = obj
         
-        # ROB... as is, this is going to copy element IDs.  Waaah!
+        if showvetting:
+            query = "SELECT object_id,username,goodbad FROM scanscore WHERE object_id IN %s"
+            cursor = self.db.cursor( cursor_factory=psycopg2.extras.DictCursor )
+            cursor.execute( query, ( tuple(oids), ) )
+            rows = cursor.fetchall()
+            cursor.close()
+            for row in rows:
+                if not "vetting" in objdict[row["object_id"]]:
+                    objdict[row["object_id"]]["vetting"] = {}
+                objdict[row["object_id"]]["vetting"][row["username"]] = row["goodbad"]
+                
+        self.objecttable( objects, showvetting=showvetting )
+        
         self.prevnext( self.state, numobjs )
 
     # ========================================
@@ -1164,7 +1218,7 @@ class RateCands(HandlerBase):
                   "ENCODE(cu.diff_jpeg, 'base64') as diffjpg "
                   "FROM cutouts cu INNER JOIN objects o ON cu.object_id=o.id "
                   "WHERE o.id IN %s" )
-        sys.stderr.write( "Sending query {}\n".format( cursor.mogrify( query, ( tuple(oids), ) ) ) )
+        # sys.stderr.write( "Sending query {}\n".format( cursor.mogrify( query, ( tuple(oids), ) ) ) )
         cursor.execute( query, ( tuple(oids), ) )
         rows = cursor.fetchall()
         for row in rows:

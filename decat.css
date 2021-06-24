@@ -49,6 +49,12 @@ table.candlist td { border-bottom: 2px solid var(--half-faded-color);
 table.candsearchparams td { text-align: right }
 table.candsearchparams td.left { text-align: left }
 
+td.vettinglist { border: 2px solid var(--half-faded-color);
+                 border-spacing: 2px;
+                 padding-left: 2px;
+                 padding-right: 2px;
+               }
+
 .good { font-weight: bold; color: #00c000; }
 .bad { font-weight: bold; color: #c00000; }
 

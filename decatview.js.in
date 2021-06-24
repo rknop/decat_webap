@@ -46,6 +46,7 @@ get_show_exp_data = function( exposure )
 {
     var data = {};
     data.ccds = document.getElementById("ccds").value;
+    data.showvetting = document.getElementById("showvetting").value;
     data.showrb = document.getElementById("showrb0").value; // Extra 0 from how I do ids with web.form.Input
     data.offset = document.getElementById("offset0").value; //  "    "  "    "  " "   "   "    "   
     data.date0 = document.getElementById("date00").value;   //  "    "  "    "  " "   "   "    "   
@@ -89,6 +90,14 @@ showlog = function( exposure )
     send_show_exp_request( reqdata );
 }
 
+
+setallbad = function( user, password, objects )
+{
+    if ( ! confirm( "Really set all unset objects to bad?  Be careful!" ) )
+        return;
+    for ( let obj of objects )
+        sendgoodbad( user, password, obj, "bad" )
+}
 
 sendgoodbad = function( user, password, obj, goodbad )
 {
