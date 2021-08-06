@@ -3,10 +3,13 @@
 
 # DON'T EDIT decatview.py, INSTEAD EDIT decatview.py.in
 
+# https://www.legacysurvey.org/viewer?ra=30.1530962&dec=-5.0236864&zoom=16&layer=dr8
+
 import sys
 import math
 import os
 import re
+import time
 import random
 import json
 import psycopg2
@@ -126,7 +129,53 @@ class HandlerBase(object):
             if stateval in self.webinput:
                 self.state[stateval] = self.webinput[stateval]
 
+    # ========================================
 
+    def prevnext( self, state, numobjs, formtarget="showexp" ):
+        nextarr = []
+        prevarr = []
+        nextord = self.idordinal
+        prevord = nextord + 1
+        self.idordinal += 2
+        for key in state:
+            if key=="offset":
+                nextvalue = int(state["offset"]) + int(state["numperpage"])
+                prevvalue = int(state["offset"]) - int(state["numperpage"])
+                prevvalue = prevvalue if prevvalue > 0 else 0
+            else:
+                nextvalue = prevvalue = state[key]
+            nextarr.append( form.Hidden( key, value=nextvalue, id="{}{}".format(key, nextord) ) )
+            prevarr.append( form.Hidden( key, value=prevvalue, id="{}{}".format(key, prevord) ) )
+        nextarr.append( form.Button( name="Next {}".format( state["numperpage"] ),
+                                     id="Next_{}.{}".format( state["numperpage"], self.idordinal ),
+                                     html="Next {}".format( state["numperpage"] ),
+                                     type="submit",
+                                     formaction="{}{}".format( webapfullurl, formtarget ) ) )
+        prevarr.append( form.Button( name="Previous {}".format( state["numperpage"] ),
+                                     id="Previous_{}.{}".format( state["numperpage"], self.idordinal ),
+                                     html="Previous {}".format( state["numperpage"] ),
+                                     type="submit",
+                                     formaction="{}{}".format( webapfullurl, formtarget ) ) )
+        
+        nextform = form.Form( *nextarr )
+        prevform = form.Form( *prevarr )
+
+        self.back_to_home()
+
+        # self.response += ( "<p>In prevnext, offset={}, numperpage={}, numobjs={}</p>\n"
+        #                    .format( state["offset"], state["numperpage"], numobjs ) )
+        
+        if int(state["offset"]) > 0:
+            self.response += "<form method=\"Post\">\n"
+            self.response += prevform.render()
+            self.response += "</form>\n"
+        if int(state["offset"]) + int(state["numperpage"]) < numobjs:
+            self.response += "<form method=\"Post\">\n"
+            self.response += nextform.render()
+            self.response += "</form>\n"
+
+    # ========================================
+        
     def objecttable( self, rows, showvetting=False, goodbad=None, user=None, passwd=None ):
 
         setallunsetbadbutton = ""
@@ -169,7 +218,8 @@ class HandlerBase(object):
             if goodbad is None:
                 self.response += "<b>rb: {:.4f}</b><br>\n".format( rb )
             self.response += u"α: {} &nbsp;&nbsp; δ: {}<br>\n".format( dtohms( ra ), dtodms( dec ) )
-            self.response += "File: {}<br>ccd: {}\n".format(filename.replace(".fz",""), ccdnum)
+            self.response += "File: {}<br>ccd: {}<br>\n".format(filename.replace(".fz",""), ccdnum)
+            self.response += "Obj ID: {}\n".format( objid )
 
             if scib64 is None:
                 self.response += "<td>(Sci cutout missing)</td>\n"
@@ -275,7 +325,7 @@ class FrontPage(HandlerBase):
         self.htmltop()
         self.set_state()
 
-        self.response += "<h1>DECAT subtraction viewer</h1>\n"
+        self.response += "<h1>DECAT extragalactic subtraction viewer</h1>\n"
 
         self.response += "<hr>\n"
         self.response += "<h2>Exposure Search</h2>\n"
@@ -299,7 +349,16 @@ class FrontPage(HandlerBase):
         self.response += "</p>\n</form>\n"
 
         self.response += "<hr>\n"
+        self.response += "<h2>Candidate Lookup</h2>\n"
+        self.response += "<form method=\"POST\" action=\"{}showcand\">\n".format( webapfullurl )
+        self.response += form.Input( name="candidate", id="cand49152", type="text" ).render()
+        self.response += "\n<br>\n"
+        self.response += form.Input( name="submit", type="submit", value="Show" ).render()
+        self.response += "\n</form>\n"
+        
+        self.response += "<hr>\n"
         self.response += "<h2>Candidate Search</h2>\n"
+        self.response += "<b>Note: this doesn't seem to work now, times out.</b>"
         self.response += "<form method=\"POST\" action=\"{}findcands\"></p>\n".format( webapfullurl )
         self.response += "<table class=\"candsearchparams\">\n"
         self.response += "<tr><td>Min # Detections:</td><td>"
@@ -363,6 +422,15 @@ class FrontPage(HandlerBase):
                                         value="no" ).render()
         self.response += "</td></tr>\n<tr><td>"
         self.response += form.Input( name="submitvet", type="submit", value="Show Objects" ).render()
+        self.response += "</td><td>(This takes a little while, be patient.)</td></tr></table>\n"
+        self.response += "</form>\n"
+
+        self.response += "<h3>Show vetted candidates</h3>\n"
+        self.response += "<p>(Gratuitously sorts by exposure, ccd, object id.  Will take a long time.)</p>"
+        self.response += "<form method=\"POST\" action=\"{}showrated\">\n".format( webapfullurl )
+        self.response += "<p>"
+        self.response += form.Input( name="submitshowvet", type="submit", value="Show Vetted Objects" ).render()
+        self.response += "</p>\n</form>\n"
         
         self.htmlbottom()
         return self.response
@@ -387,7 +455,10 @@ class FindCandidates(HandlerBase):
         decformat = self.state["decformat"]
         decstr = self.state["dec"]
         radformat = self.state["searchunit"]
-        radius = float( self.state["searchradius"] )
+        try:
+            radius = float( self.state["searchradius"] )
+        except ValueError:
+            radius = 0.
 
         self.back_to_home()
 
@@ -461,7 +532,7 @@ class FindCandidates(HandlerBase):
             cursor.close()
             return self.response
         self.response += "<p>Initial query returned {} candidates</p>\n".format( len(rows) )
-        sys.stderr.write( "Initial query returned {} candidates\n".format( len(rows) ) )
+        # sys.stderr.write( "Initial query returned {} candidates\n".format( len(rows) ) )
         
         candlist = []
         cands = {}
@@ -531,7 +602,7 @@ class FindCandidates(HandlerBase):
                                               ( cands[c]["maxjd"] - cands[c]["minjd"] >= mindays ) ) ]
 
         self.response += "<p>After cuts, {} remain.</p>\n".format( len(candlist) )
-        sys.stderr.write( "After cuts, {} remain.\n".format( len(candlist) ) )
+        # sys.stderr.write( "After cuts, {} remain.\n".format( len(candlist) ) )
         
         self.response += "<form method=\"POST\" action=\"{}showcand\">\n".format( webapfullurl )
         self.hidden_state()
@@ -793,51 +864,6 @@ class ListExposures(HandlerBase):
 
 class ShowExposure(HandlerBase):
     
-    def prevnext( self, state, numobjs ):
-        nextarr = []
-        prevarr = []
-        nextord = self.idordinal
-        prevord = nextord + 1
-        self.idordinal += 2
-        for key in state:
-            if key=="offset":
-                nextvalue = int(state["offset"]) + int(state["numperpage"])
-                prevvalue = int(state["offset"]) - int(state["numperpage"])
-                prevvalue = prevvalue if prevvalue > 0 else 0
-            else:
-                nextvalue = prevvalue = state[key]
-            nextarr.append( form.Hidden( key, value=nextvalue, id="{}{}".format(key, nextord) ) )
-            prevarr.append( form.Hidden( key, value=prevvalue, id="{}{}".format(key, prevord) ) )
-        nextarr.append( form.Button( name="Next {}".format( state["numperpage"] ),
-                                     id="Next_{}.{}".format( state["numperpage"], self.idordinal ),
-                                     html="Next {}".format( state["numperpage"] ),
-                                     type="submit",
-                                     formaction="{}showexp".format( webapfullurl ) ) )
-        prevarr.append( form.Button( name="Previous {}".format( state["numperpage"] ),
-                                     id="Previous_{}.{}".format( state["numperpage"], self.idordinal ),
-                                     html="Previous {}".format( state["numperpage"] ),
-                                     type="submit",
-                                     formaction="{}showexp".format( webapfullurl ) ) )
-        
-        nextform = form.Form( *nextarr )
-        prevform = form.Form( *prevarr )
-
-        self.back_to_home()
-
-        # self.response += ( "<p>In prevnext, offset={}, numperpage={}, numobjs={}</p>\n"
-        #                    .format( state["offset"], state["numperpage"], numobjs ) )
-        
-        if int(state["offset"]) > 0:
-            self.response += "<form method=\"Post\">\n"
-            self.response += prevform.render()
-            self.response += "</form>\n"
-        if int(state["offset"]) + int(state["numperpage"]) < numobjs:
-            self.response += "<form method=\"Post\">\n"
-            self.response += nextform.render()
-            self.response += "</form>\n"
-
-    # ========================================
-        
     def do_the_things(self):
         web.header('Content-Type', 'text/html; charset="UTF-8"')
         self.htmltop()
@@ -1049,48 +1075,6 @@ class ShowExposure(HandlerBase):
 
 # ======================================================================
 
-class SetGoodBad(HandlerBase):
-    def do_the_things( self ):
-        web.header('Content-Type', 'application/json')
-
-        data = json.loads( web.data().decode(encoding='utf-8') )
-        rval = self.check_scan_user( data )
-        if rval is not None:
-            return rval
-
-        query = ( "SELECT user,password FROM scanusers WHERE username=%s" )
-        cursor = self.db.cursor( cursor_factory = psycopg2.extras.DictCursor )
-        cursor.execute( query, ( data["user"], ) )
-        rows = cursor.fetchall()
-        if len(rows) == 0:
-            rval = { "error": "No such user \"{}\"".format( data["user"] ) }
-            return json.dumps(rval)
-        if len(rows) > 1:
-            rval =  { "error": "User \"{}\" multiply defined!".format( user ) }
-        if rows[0]["password"] != data["password"]:
-            rval = { "error": "Incorrect password for {}".format(user) }
-            
-        objid = int(data["obj"])
-        if data["status"] == "good": goodbad = True
-        elif data["status"] == "bad": goodbad = False
-        else:
-            rval = { "error": "{} is neither good nor bad".format( data["status"] ) }
-            return json.dumps(rval)
-
-        pkey = "{}_{}".format( objid, data["user"] )
-        query = ( "INSERT INTO scanscore(id,object_id,username,goodbad) VALUES(%s,%s,%s,%s) "
-                  "ON CONFLICT ON CONSTRAINT scanscore_pkey DO UPDATE SET goodbad=%s" )
-        cursor = self.db.cursor()
-        cursor.execute( query, ( pkey, objid, data["user"], data["status"], data["status"] ) )
-        self.db.commit()
-        cursor.close()
-
-        rval = { "objid": objid, "status": "good" if goodbad else "bad" }
-        return json.dumps(rval)
-        
-
-# ======================================================================
-
 class ShowCandidate(HandlerBase):
     def do_the_things( self ):
         web.header('Content-Type', 'text/html; charset="UTF-8"')
@@ -1102,7 +1086,7 @@ class ShowCandidate(HandlerBase):
         self.response += "<h3>Candidate: {}</h3>\n".format( self.state["candidate"] )
         self.response += ( "<p>(<a href=\"{}showcand?candidate={}\">Share Link</a>)</p>\n"
                            .format( webapfullurl, self.state[ "candidate" ] ) )
-        
+
         cursor = self.db.cursor( cursor_factory = psycopg2.extras.DictCursor )
         query = ( "SELECT * FROM candidates WHERE id=%s" )
         cursor.execute( query, ( self.state["candidate"], ) )
@@ -1124,10 +1108,15 @@ class ShowCandidate(HandlerBase):
                  "INNER JOIN exposures e ON s.exposure_id=e.id "
                  "LEFT JOIN cutouts c ON c.object_id=o.id "
                  "WHERE o.candidate_id=%s ORDER BY e.mjd,e.filter" )
-        sys.stderr.write( "{}\n".format( cursor.mogrify( query, ( self.state["candidate"], ) ) ) )
+        # sys.stderr.write( "{}\n".format( cursor.mogrify( query, ( self.state["candidate"], ) ) ) )
         cursor.execute( query, ( self.state["candidate"], ) )
         rows = cursor.fetchall()
         cursor.close()
+        
+        self.response += ( "<p><a href=\"https://www.legacysurvey.org/viewer?ra={:.5f}&dec={:.5f}&zoom=16&layer=dr8&mark={:.5f},{:.5f}\">"
+                           .format( rows[0]["ra"], rows[0]["dec"], rows[0]["ra"], rows[0]["dec"] ) )
+        self.response += "Desi Viewer at this position</a></p>"
+
         
         self.response += "<form method=\"post\" action=\"{}showexp\"></p>\n".format( webapfullurl )
         self.hidden_state( omit=["exposure"] )
@@ -1177,36 +1166,73 @@ class RateCands(HandlerBase):
             self.htmlbottom()
             return self.response
 
+        cursor = self.db.cursor( cursor_factory = psycopg2.extras.DictCursor )
+
         if self.state["vetprerated"] == "yes":
-            self.response += "<p>Vetting pre-rated candidates is not yet implemented.</p>"
+            # Get a random set of candidates ranked by others not by us
+            query = ( "SELECT oid,users,exposure_id,cid,rb,ra,dec,ccdnum,filename FROM "
+                      " ( SELECT ss.object_id as oid,array_agg(ss.username) as users, "
+                      "       subs.exposure_id,c.id as cid,o.rb,o.ra,o.dec,subs.ccdnum,e.filename "
+                      "   FROM scanscore ss "
+                      "   INNER JOIN objects o ON ss.object_id=o.id "
+                      "   INNER JOIN candidates c ON o.candidate_id=c.id "
+                      "   INNER JOIN subtractions subs ON o.subtraction_id=subs.id "
+                      "   INNER JOIN exposures e ON subs.exposure_id=e.id " )
+            if self.state["vetfieldtype"] == "gal":
+                query += "   WHERE gallat < 20 AND gallat > -20 "
+            else:
+                query += "   WHERE gallat >= 20 OR gallat <= -20 "
+            query += ( "   GROUP BY ss.object_id,subs.exposure_id,subs.ccdnum,c.id,o.rb,o.ra,o.dec,e.filename) x "
+                       "WHERE %s != ALL(users) "
+                       "ORDER BY RANDOM() LIMIT 100" )
+            # sys.stderr.write( 'Candidate selection query: {}\n'
+            #                   .format( cursor.mogrify(query, (self.state['user'],)) ) )
+            cursor.execute( query, ( self.state['user'], ) )
+            objects = cursor.fetchall()
+            # sys.stderr.write( "Objects fetched from query.\n" )
+            
+        else:
+            # First, get the list of relevant exposures
+            query = "SELECT id,filename FROM exposures "
+            if self.state["vetfieldtype"] == "gal":
+                query += "WHERE gallat < 20 AND gallat > -20 "
+            else:
+                query += "WHERE gallat >= 20 OR gallat <= -20 "
+            query += "ORDER BY id"
+            cursor.execute( query )
+            rows = cursor.fetchall()
+            expids = []
+            exposurenames = {}
+            for row in rows:
+                expids.append( row["id"] )
+                exposurenames[row["id"]] = row["filename"]
+
+            # Randoly select 100 objects from this list of exposures
+            query = ( "SELECT c.id as cid,o.id as oid,o.rb,o.ra,o.dec,s.ccdnum,s.exposure_id "
+                      "FROM OBJECTS o "
+                      "INNER JOIN candidates c ON o.candidate_id=c.id "
+                      "INNER JOIN subtractions s ON o.subtraction_id=s.id "
+                      "WHERE s.exposure_id IN %s "
+                      "ORDER BY RANDOM() LIMIT 100" )
+            # sys.stderr.write( "Bigass query started at {}\n".format( time.ctime() ) )
+            cursor.execute( query, ( tuple(expids), ) )
+            objects = cursor.fetchall()
+            # sys.stderr.write( "Objects fetched from query at {}\n".format( time.ctime() ) )
+
+        if len(objects) == 0:
+            self.response += "<p>No objects found matching criteria.</p>"
             self.htmlbottom()
             return self.response
-
-        # Get a random selection of objects from the database
-
-        query = ( "SELECT c.id as cid,o.id as oid,o.rb,o.ra,o.dec,s.ccdnum,e.filename "
-                  "FROM OBJECTS O "
-                  "INNER JOIN candidates c ON o.candidate_id=c.id "
-                  "INNER JOIN subtractions s ON o.subtraction_id=s.id "
-                  "INNER JOIN exposures e ON s.exposure_id=e.id " )
-        if self.state["vetfieldtype"] == "gal":
-            query += "WHERE e.gallat < 20 AND e.gallat > -20"
+            
+        if len(objects) < 100:
+            objects = [ dict(o) for o in objects ]
         else:
-            query += "WHERE e.gallat >= 20 OR e.gallat <= -20"
-        cursor = self.db.cursor( cursor_factory = psycopg2.extras.DictCursor )
-        cursor.execute( query )
-        objects = cursor.fetchall()
-
-        # It feels a little profligate to me to get tens of millions of
-        # objects from the database and then only to keep 100.  I'm a
-        # little queasy about randomly shuffling joins like this within
-        # SQL, however, so whatever.
-        
-        random.shuffle( objects )
-        objects = [ dict(o) for o in objects[0:100] ]
+            objects = [ dict(o) for o in objects[0:100] ]
         oids = [ o["oid"] for o in objects ]
         objdict = {}
         for obj in objects:
+            if "filename" not in obj:
+                obj["filename"] = exposurenames[obj["exposure_id"]]
             obj["scijpg"] = None
             obj["refjpg"] = None
             obj["diffjpg"] = None
@@ -1253,6 +1279,106 @@ class RateCands(HandlerBase):
         return self.response
 
 # ======================================================================
+
+class ShowRatedObjs(HandlerBase):
+    def do_the_things( self ):
+        web.header('Content-Type', 'text/html; charset="UTF-8"')
+        self.htmltop()
+        self.set_state()
+
+        cursor = self.db.cursor( cursor_factory = psycopg2.extras.DictCursor )
+
+        # Get a count
+
+        query = "SELECT COUNT(id) FROM ( SELECT object_id AS id FROM scanscore GROUP BY object_id ) AS x";
+        cursor.execute(query)
+        numobj = cursor.fetchone()[0]
+        
+        # Get the ranked things
+        
+        query = ( "SELECT oid,users,goodbads,exposure_id,cid,rb,ra,dec,ccdnum,filename,scijpg,refjpg,diffjpg FROM "
+                  "  ( SELECT ss.object_id AS oid,subs.exposure_id,o.candidate_id AS cid,o.rb,o.ra,o.dec,"
+                  "           subs.ccdnum,e.filename,"
+                  "           array_agg(ss.username) as users,"
+                  "           array_agg(ss.goodbad) as goodbads,"
+                  "           ENCODE(cu.sci_jpeg, 'base64') AS scijpg, "
+                  "           ENCODE(cu.ref_jpeg, 'base64') AS refjpg, "
+                  "           ENCODE(cu.diff_jpeg, 'base64') AS diffjpg "
+                  "    FROM scanscore ss "
+                  "    INNER JOIN objects o ON ss.object_id=o.id "
+                  "    INNER JOIN subtractions subs ON o.subtraction_id=subs.id "
+                  "    INNER JOIN exposures e ON subs.exposure_id=e.id "
+                  "    LEFT JOIN cutouts cu ON cu.object_id=o.id "
+                  "    GROUP BY ss.object_id,e.id,e.filename,o.id,o.candidate_id,o.rb,o.ra,o.dec,"
+                  "             subs.exposure_id,subs.ccdnum,"
+                  "             cu.sci_jpeg,cu.ref_jpeg,cu.diff_jpeg "
+                  "    ORDER BY e.mjd,subs.ccdnum,o.id ) x "
+                  "LIMIT %s OFFSET %s" )
+        # sys.stderr.write( "Query: {}\n".format( cursor.mogrify( query, ( self.state["numperpage"],
+        #                                                                  self.state["offset"] ) ) ) )
+        cursor.execute(query, ( self.state["numperpage"], self.state["offset"] ) )
+        rows = cursor.fetchall()
+        rows = [dict(row) for row in rows ]
+        
+        # Wrangle the vetting info into what HandlerBase.objecttable expects
+
+        for row in rows:
+            row["vetting"] = {}
+            for username, score in zip( row["users"], row["goodbads"] ):
+                row["vetting"][username] = score
+
+        # Show
+
+        self.prevnext( self.state, numobj, "showrated" )
+        self.objecttable( rows, showvetting=True )
+        self.prevnext( self.state, numobj, "showrated" )
+                
+        self.htmlbottom
+        return self.response
+
+# ======================================================================
+
+class SetGoodBad(HandlerBase):
+    def do_the_things( self ):
+        web.header('Content-Type', 'application/json')
+
+        data = json.loads( web.data().decode(encoding='utf-8') )
+        rval = self.check_scan_user( data )
+        if rval is not None:
+            return rval
+
+        query = ( "SELECT user,password FROM scanusers WHERE username=%s" )
+        cursor = self.db.cursor( cursor_factory = psycopg2.extras.DictCursor )
+        cursor.execute( query, ( data["user"], ) )
+        rows = cursor.fetchall()
+        if len(rows) == 0:
+            rval = { "error": "No such user \"{}\"".format( data["user"] ) }
+            return json.dumps(rval)
+        if len(rows) > 1:
+            rval =  { "error": "User \"{}\" multiply defined!".format( user ) }
+        if rows[0]["password"] != data["password"]:
+            rval = { "error": "Incorrect password for {}".format(user) }
+            
+        objid = int(data["obj"])
+        if data["status"] == "good": goodbad = True
+        elif data["status"] == "bad": goodbad = False
+        else:
+            rval = { "error": "{} is neither good nor bad".format( data["status"] ) }
+            return json.dumps(rval)
+
+        pkey = "{}_{}".format( objid, data["user"] )
+        query = ( "INSERT INTO scanscore(id,object_id,username,goodbad) VALUES(%s,%s,%s,%s) "
+                  "ON CONFLICT ON CONSTRAINT scanscore_pkey DO UPDATE SET goodbad=%s" )
+        cursor = self.db.cursor()
+        cursor.execute( query, ( pkey, objid, data["user"], data["status"], data["status"] ) )
+        self.db.commit()
+        cursor.close()
+
+        rval = { "objid": objid, "status": "good" if goodbad else "bad" }
+        return json.dumps(rval)
+        
+
+# ======================================================================
     
 class DumpData(HandlerBase):
     def do_the_things( self ):
@@ -1277,6 +1403,7 @@ urls = (
     "/showcand", "ShowCandidate" ,
     "/ratecands", "RateCands",
     "/setgoodbad", "SetGoodBad" ,
+    "/showrated", "ShowRatedObjs",
     "/dumpdata", "DumpData" ,
     )
 

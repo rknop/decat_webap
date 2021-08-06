@@ -1,0 +1,74 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+
+# DON'T EDIT decatview.py, INSTEAD EDIT decatview.py.in
+
+import sys
+import math
+import web
+
+# web.ctx has the filename, but doesn't
+#   exist until an application's been called.
+if not "/var/www/raknop/decat/view" in sys.path:
+    sys.path.insert(0, "/var/www/raknop/decat/view")
+
+from webapconfig import galapfullurl, webapdir, webapdirurl, DBdata
+from util import dtohms, dtodms, radectolb, mjd, dateofmjd, parsedms, sanitizeHTML
+
+# ======================================================================
+
+class HandlerBase(object):
+    def __init__(self):
+        self.response = ""
+        self.idordinal = 0
+        
+        with open(DBdata) as ifp:
+            user = ifp.readline().strip()
+            password = ifp.readline().strip()
+            host = ifp.readline().strip()
+            port = ifp.readline().strip()
+            database = ifp.readline().strip()
+        # sys.stderr.write("viewxps.py connecting to database with dbname='{}' user='{}' host='{}' password='{}'\n"
+        #                  .format( database, user, host, password ))
+        self.db = psycopg2.connect("dbname='{}' user='{}' host='{}' password='{}'"
+                                   .format( database, user, host, password ))
+        # sys.stderr.write("db.status is {}\n".format(self.db.status))
+
+    def finalize(self):
+        self.db.close()
+
+    def htmltop(self):
+        self.response = "<!DOCTYPE html>\n"
+        self.response += "<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\">\n"
+        self.response += "<link rel=\"stylesheet\" href=\"{}decat.css\">\n".format( webapdirurl )
+        # self.response += "<script src=\"{}decatgal.js\"></script>\n".format( webapdirurl )
+        self.response += "<title>DECaT LBL Galactic Pipeline Browser</title>\n"
+        self.response += "</head>\n<body>\n"
+
+    def htmlbottom(self):
+        self.response += "\n</body>\n</html>\n"
+
+    def GET( self ):
+        response = self.do_the_things()
+        self.finalize()
+        return response
+
+    def POST( self ):
+        response = self.do_the_things()
+        self.finalize()
+        return response
+
+# ======================================================================
+
+class FrontPage(HandlerBase):
+    def do_the_things(self):
+        ROB YOU ARE HERE
+        
+# ======================================================================
+
+urls = (
+    '/', "FrontPage",
+    )
+
+application = web.application(urls, globals()).wsgifunc()
+

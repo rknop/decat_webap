@@ -28,12 +28,12 @@ install: webapconfig webapinstall
 dev: webapdevconfig webapdevinstall
 
 webapdevconfig: webapconfig.py.in decatview.js.in
-	cat webapconfig.py.in | perl -pe 's/\@webapurl\@/$(HOST_DEVP)$(URLDIR_DEVP)\/decatview.py\//; s/\@webapdirurl\@/$(URLDIR_DEVP)\//; s/\@webapdir\@/$(INSTALLDIR_DEVP)/; s/\@dbdata\@/$(SECRETS_DEVP)/' > webapconfig.py
+	cat webapconfig.py.in | perl -pe 's/\@webapurl\@/$(HOST_DEVP)$(URLDIR_DEVP)\/decatview.py\//; s/\@galapurl\@/$(HOST_DEVP)$(URLDIR_DEVP)\/decat_gal.py\//; s/\@webapdirurl\@/$(URLDIR_DEVP)\//; s/\@webapdir\@/$(INSTALLDIR_DEVP)/; s/\@dbdata\@/$(SECRETS_DEVP)/' > webapconfig.py
 	cat decatview.js.in | perl -pe 's/\@webap\@/$(HOST_DEVP)$(URLDIR_DEVP)\/decatview.py\//' > decatview.js
 	cat decatview.py.in | perl -pe 's/\@webapdir\@/$(INSTALLDIR_DEVP)/' > decatview.py
 
 webapconfig: webapconfig.py.in decatview.js.in
-	cat webapconfig.py.in | perl -pe 's/\@webapurl\@/$(HOSTP)$(URLDIRP)\/decatview.py\//; s/\@webapdirurl\@/$(URLDIRP)\//; s/\@webapdir\@/$(INSTALLDIRP)/; s/\@dbdata\@/$(SECRETSP)/' > webapconfig.py
+	cat webapconfig.py.in | perl -pe 's/\@webapurl\@/$(HOSTP)$(URLDIRP)\/decatview.py\//; s/\@galapurl\@/$(HOST)$(URLDIR)\/decat_gal.py\//; s/\@webapdirurl\@/$(URLDIRP)\//; s/\@webapdir\@/$(INSTALLDIRP)/; s/\@dbdata\@/$(SECRETSP)/' > webapconfig.py
 	cat decatview.js.in | perl -pe 's/\@webap\@/$(HOSTP)$(URLDIRP)\/decatview.py\//' > decatview.js
 	cat decatview.py.in | perl -pe 's/\@webapdir\@/$(INSTALLDIRP)/' > decatview.py
 

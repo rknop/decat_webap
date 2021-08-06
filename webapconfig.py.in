@@ -1,6 +1,7 @@
 # DONT EDIT webapconfig.py, INSTEAD EDIT webapconfig.py.in
 
 webapfullurl = "@webapurl@"
+galapfullurl = "@galapurl@"
 webapdirurl = "@webapdirurl@"
 webapdir = "@webapdir@"
 DBdata = "@dbdata@"

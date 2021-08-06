@@ -91,11 +91,26 @@ showlog = function( exposure )
 }
 
 
-setallbad = function( user, password, objects )
+setallbad = function( user, password )
 {
     if ( ! confirm( "Really set all unset objects to bad?  Be careful!" ) )
         return;
-    for ( let obj of objects )
+    let re = new RegExp( '^(.*)status(good|bad)$' );
+    let allobjs = [];
+    let setobjs = [];
+    let elems = document.getElementsByTagName( "input" );
+    for ( elem of elems ) {
+        let match = re.exec(elem.id);
+        if ( match != null ) {
+            allobjs.push( match[1] );
+            if ( elem.checked ) setobjs.push( match[1] );
+        }
+    }
+    let unsetobjs = [];
+    for ( let obj of allobjs ) {
+        if ( ! setobjs.includes(obj) ) unsetobjs.push( obj );
+    }
+    for ( let obj of unsetobjs )
         sendgoodbad( user, password, obj, "bad" )
 }
 
@@ -121,4 +136,16 @@ echogoodbad = function( statedata ) {
     elem = document.getElementById(id);
     elem.innerHTML = statedata["status"];
     elem.setAttribute("class", statedata["status"]);
+    if ( statedata["status"] == "good" ) {
+        elem = document.getElementById( id + "good" );
+        elem.checked = true;
+        elem = document.getElementById( id + "bad" );
+        elem.checked = false;
+    }
+    else {
+        elem = document.getElementById( id + "good" );
+        elem.checked = false;
+        elem = document.getElementById( id + "bad" );
+        elem.checked = true;
+    }
 }

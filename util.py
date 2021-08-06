@@ -67,8 +67,8 @@ def dtohms( degrees ):
     fullhours = degrees/15.
     hours = int(math.floor(fullhours))
     minutes = int( math.floor( (fullhours - hours) * 60 ) )
-    seconds = int( math.floor( ((fullhours - hours)*60 - minutes) * 60  + 0.5 ) )
-    return "{:02d}:{:02d}:{:02d}".format(hours, minutes, seconds)
+    seconds = int( math.floor( ((fullhours - hours)*60 - minutes) * 6000  + 0.5 ) ) / 100.
+    return "{:02d}:{:02d}:{:05.2f}".format(hours, minutes, seconds)
 
 def dtodms( degrees ):
     sign = '+' if degrees > 0 else '-'
