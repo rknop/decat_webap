@@ -1,0 +1,21 @@
+MAKING THE BASE IMAGE
+=====================
+
+Make sure debootstrap is installed.
+
+Go into a clean (empty) directory
+
+Run
+
+  sudo debootstrap chimaera devuan-chimaera-rknop
+  sudo tar -C devuan-chimaera-rknop -c . | sudo docker import - devuan-chimaera-rknop
+
+MOUNTING FOR MAINTENANCE
+========================
+
+For being able to access the random internal config files:
+
+  docker run --mount type=bind,source=/home/raknop/decat_webap/spin,target=/spin \
+     --name decat-webap -it decat-webap /bin/bash
+
+To link the web browser to port 8080 on the host, add -p 8080:80 early on
