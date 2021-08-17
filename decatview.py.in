@@ -34,7 +34,7 @@ import PIL.Image
 if not "@webapdir@" in sys.path:
     sys.path.insert(0, "@webapdir@")
 
-from webapconfig import webapfullurl, webapdir, webapdirurl, DBdata
+from webapconfig import webapfullurl, webapdir, webapdirurl, DBdata, DBname
 from util import dtohms, dtodms, radectolb, mjd, dateofmjd, parsedms, sanitizeHTML
 
 # ======================================================================
@@ -44,11 +44,15 @@ class HandlerBase(object):
         self.response = ""
         self.idordinal = 0
         
-        with open(DBdata) as ifp:
+        with open( f'{DBdata}/dbuser' ) as ifp:
             user = ifp.readline().strip()
+        with open( f'{DBdata}/dbpasswd' ) as ifp:
             password = ifp.readline().strip()
+        with open( f'{DBdata}/dbhost' ) as ifp:
             host = ifp.readline().strip()
+        with open( f'{DBdata}/dbport' ) as ifp:
             port = ifp.readline().strip()
+        with open( f'{DBdata}/{DBname}' ) as ifp:
             database = ifp.readline().strip()
         # sys.stderr.write("viewxps.py connecting to database with dbname='{}' user='{}' host='{}' password='{}'\n"
         #                  .format( database, user, host, password ))
@@ -433,6 +437,7 @@ class FrontPage(HandlerBase):
         self.response += "</p>\n</form>\n"
         
         self.htmlbottom()
+        sys.stderr.write( "About to return self.response\n" )
         return self.response
         
 # ======================================================================
@@ -1407,5 +1412,9 @@ urls = (
     "/dumpdata", "DumpData" ,
     )
 
-application = web.application(urls, globals()).wsgifunc()
+web.config.session_parameters["samesite"] = "lax"
+app = web.application(urls, globals())
+application = app.wsgifunc()
 
+if __name__ == "__main__":
+    app.run()
