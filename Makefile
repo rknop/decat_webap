@@ -1,11 +1,14 @@
-HOST = https://decat-webap.decat-webap.development.svc.spin.nersc.org
-URLDIR = /exgal
-WEBAPDIR = /html/exgal
-INSTALLDIR = /global/cfs/cdirs/m937/decat-webap/html/exgal
+HOST = http://decat-webap.decat-webap.development.svc.spin.nersc.org
+URLDIR = 
+WEBAPDIR = /html
+INSTALLDIR = /global/cfs/cdirs/m937/decat-webap/html
 HOST_DEV = $(HOST)
-URLDIR_DEV = /exgal_dev
-WEBAPDIR_DEV  = /html/exgal_dev
-INSTALLDIR_DEV = /global/cfs/cdirs/m937/decat-webap/html/exgal_dev
+URLDIR_DEV = /dev
+WEBAPDIR_DEV  = /html/dev
+INSTALLDIR_DEV = /global/cfs/cdirs/m937/decat-webap/html/dev
+PYTHONPATHDIR = /html
+WEBAPCONFIG = webapconfig_production
+WEBAPCONFIG_DEV = webapconfig_dev
 
 DBDATA = /dbinfo
 DBNAME = db
@@ -14,7 +17,9 @@ DBNAME_DEV = db_dev
 # For this to work, the spin load needs to have keys in a secret mounted at /dbinfo
 #   db, db_dev, dbhost, dbpasswd, dbport, dbuser
 
-toinstall = .htaccess decat.css decatview.js decatview.py util.py test.py webapconfig.py
+toinstall = .htaccess decat.css decatview.js decatview.py util.py test.py
+webapconfigprod = $(WEBAPCONFIG).py
+webapconfigdev = $(WEBAPCONFIG_DEV).py
 # tosecretinstall = 
 
 # ======================================================================
@@ -31,24 +36,36 @@ INSTALLDIR_DEVP = $(subst /,\/,$(INSTALLDIR_DEV))
 DBDATAP = $(subst /,\/,$(DBDATA))
 DBNAMEP = $(subst /,\/,$(DBNAME))
 DBNAME_DEVP = $(subst /,\/,$(DBNAME_DEV))
+PYTHONPATHDIRP = $(subst /,\/,$(PYTHONPATHDIR))
+WEBAPCONFIGP = $(subst /,\/,$(WEBAPCONFIG))
+WEBAPCONFIG_DEVP = $(subst /,\/,$(WEBAPCONFIG_DEV))
 
-install: webapconfig webapinstall
+default:
+	@echo Do "make install" or "make dev"
 
-dev: webapdevconfig webapdevinstall
+install: webap webapinstall
 
-webapdevconfig: webapconfig.py.in decatview.js.in
-	cat webapconfig.py.in | perl -pe 's/\@webapurl\@/$(HOST_DEVP)$(URLDIR_DEVP)\/decatview.py\//; s/\@galapurl\@/$(HOST_DEVP)$(URLDIR_DEVP)\/decat_gal.py\//; s/\@webapdirurl\@/$(URLDIR_DEVP)\//; s/\@webapdir\@/$(WEBAPDIR_DEVP)/; s/\@dbdata\@/$(DBDATAP)/; s/\@dbname\@/$(DBNAME_DEVP)/;' > webapconfig.py
+dev: webapdev webapdevinstall
+
+webapdev: webapconfig.py.in decatview.py.in decatview.js.in
 	cat decatview.js.in | perl -pe 's/\@webap\@/$(HOST_DEVP)$(URLDIR_DEVP)\/decatview.py\//' > decatview.js
-	cat decatview.py.in | perl -pe 's/\@webapdir\@/$(WEBAPDIR_DEVP)/' > decatview.py
+	cat decatview.py.in | perl -pe 's/\@pythonpathdir\@/$(PYTHONPATHDIRP)/; s/\@webapconfig\@/$(WEBAPCONFIG_DEVP)/;' > decatview.py
 
-webapconfig: webapconfig.py.in decatview.js.in
-	cat webapconfig.py.in | perl -pe 's/\@webapurl\@/$(HOSTP)$(URLDIRP)\/decatview.py\//; s/\@galapurl\@/$(HOST)$(URLDIR)\/decat_gal.py\//; s/\@webapdirurl\@/$(URLDIRP)\//; s/\@webapdir\@/$(WEBAPDIRP)/; s/\@dbdata\@/$(DBDATAP)/; s/\@dbname\@/$(DBNAME)/;' > webapconfig.py
+webapconfig_dev.py: webapconfig.py.in
+	cat webapconfig.py.in | perl -pe 's/\@webapurl\@/$(HOST_DEVP)$(URLDIR_DEVP)\/decatview.py\//; s/\@galapurl\@/$(HOST_DEVP)$(URLDIR_DEVP)\/decat_gal.py\//; s/\@webapdirurl\@/$(URLDIR_DEVP)\//; s/\@webapdir\@/$(WEBAPDIR_DEVP)/; s/\@dbdata\@/$(DBDATAP)/; s/\@dbname\@/$(DBNAME_DEVP)/;' > webapconfig_dev.py
+
+webap: webapconfig.py.in decatview.py.in decatview.js.in
 	cat decatview.js.in | perl -pe 's/\@webap\@/$(HOSTP)$(URLDIRP)\/decatview.py\//' > decatview.js
-	cat decatview.py.in | perl -pe 's/\@webapdir\@/$(WEBAPDIRP)/' > decatview.py
+	cat decatview.py.in | perl -pe 's/\@pythonpathdir\@/$(PYTHONPATHDIRP)/; s/\@webapconfig\@/$(WEBAPCONFIGP)/;' > decatview.py
 
-webapdevinstall: $(patsubst %, $(INSTALLDIR_DEV)/%, $(toinstall))
+webapconfig_production.py: webapconfig.py.in
+	cat webapconfig.py.in | perl -pe 's/\@webapurl\@/$(HOSTP)$(URLDIRP)\/decatview.py\//; s/\@galapurl\@/$(HOSTP)$(URLDIR)\/decat_gal.py\//; s/\@webapdirurl\@/$(URLDIRP)\//; s/\@webapdir\@/$(WEBAPDIRP)/; s/\@dbdata\@/$(DBDATAP)/; s/\@dbname\@/$(DBNAME)/;' > webapconfig_production.py
 
-webapinstall: $(patsubst %, $(INSTALLDIR)/%, $(toinstall))
+#webapconfigdev *DOES* go to the production direction.  It's a mess, I know.  Really I should
+#  have a dev and a production *server*.
+webapdevinstall: $(patsubst %, $(INSTALLDIR_DEV)/%, $(toinstall)) $(patsubst %, $(INSTALLDIR)/%, $(webapconfigdev))
+
+webapinstall: $(patsubst %, $(INSTALLDIR)/%, $(toinstall)) $(patsubst %, $(INSTALLDIR)/%, $(webapconfigprod))
 
 # secretinstall: $(patsubst %, $(SECRETDIR)/%, $(tosecretinstall))
 

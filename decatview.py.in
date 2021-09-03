@@ -27,14 +27,10 @@ from web import form
 import PIL
 import PIL.Image
 
-# I want to find a way not to have to
-#   hardcode a path here.
-# web.ctx has the filename, but doesn't
-#   exist until an application's been called.
-if not "@webapdir@" in sys.path:
-    sys.path.insert(0, "@webapdir@")
+if not "@pythonpathdir@" in sys.path:
+    sys.path.insert(0, "@pythonpathdir@")
 
-from webapconfig import webapfullurl, webapdir, webapdirurl, DBdata, DBname
+from @webapconfig@ import webapfullurl, webapdir, webapdirurl, DBdata, DBname
 from util import dtohms, dtodms, radectolb, mjd, dateofmjd, parsedms, sanitizeHTML
 
 # ======================================================================
@@ -54,8 +50,12 @@ class HandlerBase(object):
             port = ifp.readline().strip()
         with open( f'{DBdata}/{DBname}' ) as ifp:
             database = ifp.readline().strip()
-        # sys.stderr.write("viewxps.py connecting to database with dbname='{}' user='{}' host='{}' password='{}'\n"
-        #                  .format( database, user, host, password ))
+        sys.stderr.write( f'sys.path={sys.path}' )
+        sys.stderr.write("viewxps.py connecting to database with dbname='{}' user='{}' host='{}' password='{}'\n"
+                         .format( database, user, host, password ))
+        sys.stderr.write( f'DBdata={DBdata}, DBname={DBname}\n' )
+        sys.stderr.write( f'webapdir={webapdir}, webapdirurl={webapdirurl}, webapfullurl={webapfullurl}\n' )
+        sys.stderr.write(f'web.ctx.home={web.ctx.home}\n')
         self.db = psycopg2.connect("dbname='{}' user='{}' host='{}' password='{}'"
                                    .format( database, user, host, password ))
         # sys.stderr.write("db.status is {}\n".format(self.db.status))
