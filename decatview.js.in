@@ -1,8 +1,15 @@
 // DON'T EDIT decatview.js, INSTEAD EDIT decatview.js.in
 
-webap = "@webap@";
+var webap = "@webap@";
 
-waitforresponse = function( request )
+// Namespace
+
+var decatview = {}
+
+// **********************************************************************
+// http communication utility functions
+
+var waitforresponse = function( request )
 {
     var type;
     
@@ -28,10 +35,10 @@ waitforresponse = function( request )
 }
 
 
-catchHttpResponse = function( req, handler, errorhandler )
+var catchHttpResponse = function( req, handler, errorhandler )
 {
     if ( ! waitforresponse( req ) ) return;
-    var statedata = JSON.parse( req.responseText );
+    let statedata = JSON.parse( req.responseText );
     if ( statedata.hasOwnProperty( "error" ) ) {
         window.alert( statedata.error );
         if ( errorhandler != null ) {
@@ -42,9 +49,74 @@ catchHttpResponse = function( req, handler, errorhandler )
     handler( statedata );
 }
 
-get_show_exp_data = function( exposure )
+// **********************************************************************
+// Initialization, run when the page is fully loaded by
+// decatview.init_interval below.  Hook up all the UI.
+
+decatview.init = function()
 {
-    var data = {};
+    // I HATE Javscript scoping.  I wanted to just reuse the variable
+    // elem for all the results of getElementById like, you know, you
+    // could in python, or C, or any number of other programming
+    // languages that aren't the unintuitive mess that is Javascript..
+    // But, that totally screws up the callbacks.  So, I have to add a
+    // bunch of blocks and extra "let" statements to make Javascript
+    // behave like a sane programming language.
+    
+    let allpropornot = document.getElementById( "allpropornot" );
+    if ( allpropornot != null ) {
+        decatview.toggleWhichProps( allpropornot );
+        allpropornot.addEventListener( "change", function() { decatview.toggleWhichProps( allpropornot ) } );
+    }
+    let showobjects = document.getElementsByName( "showobjects" );
+    for ( let elem of showobjects ) {
+        elem.addEventListener( "click", function() { decatview.showObjects( elem.dataset.exposure ) } );
+    }
+    let showlog = document.getElementsByName( "showlog" );
+    for ( let elem of showlog ) {
+        elem.addEventListener( "click", function() { decatview.showLog( elem.dataset.exposure ) } );
+    }
+    let makethingsbad = document.getElementsByName( "makethingsbad" );
+    for ( let elem of makethingsbad ) {
+        elem.addEventListener( "click", function() { decatview.setAllBad( elem.dataset.user,
+                                                                          elem.dataset.password ) } );
+    }    
+    let allinputs = document.getElementsByTagName( "input" );
+    for ( let elem of allinputs ) {
+        if ( ( elem.type == "radio" ) && ( elem.name.substring(elem.name.length-9) == "statusset" ) ) {
+            elem.addEventListener( "change",
+                                   function() { decatview.sendOneGoodBad( elem.dataset.user,
+                                                                          elem.dataset.password,
+                                                                          elem.dataset.objid,
+                                                                          elem.dataset.goodbad ) } );
+        }
+    }
+}
+
+// **********************************************************************
+// Enable/disable the list of proposals based on the value of the
+// dropdown that says if you want to include all proposals or not
+
+decatview.toggleWhichProps = function( dropdown )
+{
+    let props = document.getElementsByName( "whichprops" );
+    let div = document.getElementById( "whichprops_div" );
+    if ( dropdown.value == "some" ) {
+        for ( let prop of props ) prop.disabled = false;
+        div.style.display = "block";
+    }
+    else {
+        for ( let prop of props ) prop.disabled = true;
+        div.style.display = "none";
+    }
+}
+
+// **********************************************************************
+// Small functions used with clicks, changes, etc. of UI elements
+
+decatview.get_show_exp_data = function( exposure )
+{
+    let data = {};
     data.ccds = document.getElementById("ccds").value;
     data.showvetting = document.getElementById("showvetting").value;
     data.showrb = document.getElementById("showrb0").value; // Extra 0 from how I do ids with web.form.Input
@@ -59,9 +131,9 @@ get_show_exp_data = function( exposure )
     return data;
 }
 
-send_show_exp_request = function( reqdata )
+decatview.send_show_exp_request = function( reqdata )
 {
-    var form = document.createElement( "form" );
+    let form = document.createElement( "form" );
     form.setAttribute( "method", "post" );
     form.setAttribute( "action", webap + "showexp" );
     for ( let i in reqdata ) {
@@ -71,81 +143,125 @@ send_show_exp_request = function( reqdata )
         input.setAttribute( "value", reqdata[i] );
         form.appendChild( input );
     }
-    console.log( "Submitting form to " + form.getAttribute("action") );
+    // console.log( "Submitting form to " + form.getAttribute("action") );
     document.body.appendChild( form );
     form.submit()
 }
 
-showobjects = function( exposure )
+decatview.showObjects = function( exposure )
 {
-    var reqdata = get_show_exp_data( exposure )
+    let reqdata = decatview.get_show_exp_data( exposure )
     reqdata.whattodo = "Show Objects";
-    send_show_exp_request( reqdata );
+    decatview.send_show_exp_request( reqdata );
 }
 
-showlog = function( exposure )
+decatview.showLog = function( exposure )
 {
-    var reqdata = get_show_exp_data( exposure )
+    let reqdata = decatview.get_show_exp_data( exposure )
     reqdata.whattodo = "Show Log";
-    send_show_exp_request( reqdata );
+    decatview.send_show_exp_request( reqdata );
 }
 
 
-setallbad = function( user, password )
+decatview.setAllBad = function( user, password )
 {
     if ( ! confirm( "Really set all unset objects to bad?  Be careful!" ) )
         return;
     let re = new RegExp( '^(.*)status(good|bad)$' );
-    let allobjs = [];
-    let setobjs = [];
+    let allobjs = new Set();
+    let setobjs = new Set();
     let elems = document.getElementsByTagName( "input" );
-    for ( elem of elems ) {
+    for ( let elem of elems ) {
         let match = re.exec(elem.id);
         if ( match != null ) {
-            allobjs.push( match[1] );
-            if ( elem.checked ) setobjs.push( match[1] );
+            allobjs.add( match[1] );
+            if ( elem.checked ) setobjs.add( match[1] );
         }
     }
     let unsetobjs = [];
+    let bads = [];
     for ( let obj of allobjs ) {
-        if ( ! setobjs.includes(obj) ) unsetobjs.push( obj );
+        if ( ! setobjs.has(obj) ) {
+            unsetobjs.push( obj );
+            bads.push( "bad" );
+        }
     }
-    for ( let obj of unsetobjs )
-        sendgoodbad( user, password, obj, "bad" )
+    // console.log( "Sending " + unsetobjs.length + " objects to be made bad." )
+    decatview.sendManyGoodBad( user, password, unsetobjs, bads );
 }
 
-sendgoodbad = function( user, password, obj, goodbad )
+decatview.sendOneGoodBad = function( user, password, obj, goodbad )
 {
-    var id = obj + "status";
-    let elem = document.getElementById(id);
-    elem = id.innerHTML = "...sending...";
-    var req = new XMLHttpRequest();
+    decatview.sendManyGoodBad( user, password, [obj], [goodbad] );
+}
+
+decatview.sendManyGoodBad = function( user, password, objs, goodbads )
+{
+    for ( let obj of objs ) {
+        let id = obj + "status";
+        let elem = document.getElementById(id);
+        elem.innerHTML = "...sending...";
+    }
+    let req = new XMLHttpRequest();
     req.open( "POST", webap + "setgoodbad");
     req.onreadystatechange = function() {
         catchHttpResponse( req, function( statedata ) {
-            echogoodbad( statedata );
+            decatview.echoGoodBad( statedata );
         }, null )
     };
     req.setRequestHeader( "Content-Type", "application/json" );
-    req.send( JSON.stringify( { "obj": obj, "password": password, "user": user, "status": goodbad } ) );
+    req.send( JSON.stringify( { "obj": objs, "password": password, "user": user, "status": goodbads } ) );
 }
 
-echogoodbad = function( statedata ) {
-    var id = statedata["objid"] + "status";
-    // console.log( "Looking for element " + id );
-    elem = document.getElementById(id);
-    elem.innerHTML = statedata["status"];
-    elem.setAttribute("class", statedata["status"]);
-    if ( statedata["status"] == "good" ) {
-        elem = document.getElementById( id + "good" );
-        elem.checked = true;
-        elem = document.getElementById( id + "bad" );
-        elem.checked = false;
-    }
-    else {
-        elem = document.getElementById( id + "good" );
-        elem.checked = false;
-        elem = document.getElementById( id + "bad" );
-        elem.checked = true;
+decatview.echoGoodBad = function( statedata )
+{
+    for ( let i in statedata['objid'] ) {
+        let id = statedata['objid'][i] + "status";
+        let status = statedata['status'][i];
+        // console.log( "Looking for element " + id );
+        let elem = document.getElementById(id);
+        elem.innerHTML = status;
+        elem.setAttribute("class", status);
+        if ( status == "good" ) {
+            elem = document.getElementById( id + "good" );
+            elem.checked = true;
+            elem = document.getElementById( id + "bad" );
+            elem.checked = false;
+        }
+        else {
+            elem = document.getElementById( id + "good" );
+            elem.checked = false;
+            elem = document.getElementById( id + "bad" );
+            elem.checked = true;
+        }
     }
 }
+
+// **********************************************************************
+// Startup code to hook up things
+
+decatview.started = false
+
+// console.log("About to window.setInterval...");
+decatview.init_interval = window.setInterval(
+    function()
+    {
+        let requestdata, renderer;
+
+        if (document.readyState == "complete")
+        {
+            // console.log( "document.readyState is complete" );
+            if ( !decatview.started )
+            {
+                decatview.started = true;
+                window.clearInterval( decatview.init_interval );
+                decatview.init();
+            }
+        }
+    },
+    100);
+
+// **********************************************************************
+// Make it a module!
+
+export { decatview }

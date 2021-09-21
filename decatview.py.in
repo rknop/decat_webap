@@ -30,7 +30,7 @@ import PIL.Image
 if not "@pythonpathdir@" in sys.path:
     sys.path.insert(0, "@pythonpathdir@")
 
-from @webapconfig@ import webapfullurl, webapdir, webapdirurl, DBdata, DBname
+from webapconfig import webapfullurl, webapdir, webapdirurl, DBdata, DBname
 from util import dtohms, dtodms, radectolb, mjd, dateofmjd, parsedms, sanitizeHTML
 
 # ======================================================================
@@ -50,12 +50,12 @@ class HandlerBase(object):
             port = ifp.readline().strip()
         with open( f'{DBdata}/{DBname}' ) as ifp:
             database = ifp.readline().strip()
-        sys.stderr.write( f'sys.path={sys.path}' )
-        sys.stderr.write("viewxps.py connecting to database with dbname='{}' user='{}' host='{}' password='{}'\n"
-                         .format( database, user, host, password ))
-        sys.stderr.write( f'DBdata={DBdata}, DBname={DBname}\n' )
-        sys.stderr.write( f'webapdir={webapdir}, webapdirurl={webapdirurl}, webapfullurl={webapfullurl}\n' )
-        sys.stderr.write(f'web.ctx.home={web.ctx.home}\n')
+        # sys.stderr.write( f'sys.path={sys.path}' )
+        # sys.stderr.write("decatview.py connecting to database with dbname='{}' user='{}' host='{}' password='{}'\n"
+        #                  .format( database, user, host, password ))
+        # sys.stderr.write( f'DBdata={DBdata}, DBname={DBname}\n' )
+        # sys.stderr.write( f'webapdir={webapdir}, webapdirurl={webapdirurl}, webapfullurl={webapfullurl}\n' )
+        # sys.stderr.write(f'web.ctx.home={web.ctx.home}\n')
         self.db = psycopg2.connect("dbname='{}' user='{}' host='{}' password='{}'"
                                    .format( database, user, host, password ))
         # sys.stderr.write("db.status is {}\n".format(self.db.status))
@@ -67,7 +67,7 @@ class HandlerBase(object):
         self.response = "<!DOCTYPE html>\n"
         self.response += "<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\">\n"
         self.response += "<link rel=\"stylesheet\" href=\"{}decat.css\">\n".format( webapdirurl )
-        self.response += "<script src=\"{}decatview.js\"></script>\n".format( webapdirurl )
+        self.response += "<script src=\"{}decatview.js\" type=\"module\"></script>\n".format( webapdirurl )
         self.response += "<title>DECaT LBL Pipeline Candidate Viewer</title>\n"
         self.response += "</head>\n<body>\n"
 
@@ -92,10 +92,12 @@ class HandlerBase(object):
         # Rob, do this better.  Maybe.
         self.state = { "date0": "",
                        "date1": "",
-                       "onlygallat": False,
-                       "gallatincexc": "exc",
-                       "minb": -20,
-                       "maxb": 20,
+                       # "onlygallat": False,
+                       # "gallatincexc": "exc",
+                       # "minb": -20,
+                       # "maxb": 20,
+                       "allpropornot": "inc",
+                       "whichprops": [ '2021B-0149', '2021A-0275', '2020B-0053' ],
                        "showvetting": False,
                        "offset": 0,
                        "numperpage": 100,
@@ -126,13 +128,26 @@ class HandlerBase(object):
                        "vetfieldtype": None,
                        "vetprerated": None
         }
-        self.webinput = web.input()
-        # for inpval in self.webinput:
-        #     sys.stderr.write( "{} = {}\n".format( inpval, self.webinput[inpval] ) )
+        # ROB!  Remember to give defaults for the array quantities
+        self.webinput = web.input( whichprops=self.state['whichprops'] )
         for stateval in self.state:
             if stateval in self.webinput:
                 self.state[stateval] = self.webinput[stateval]
-
+        # errstr = f"Before hacking: type(whichprops)={type(self.state['whichprops'])}\n"
+        # for i, val in enumerate(self.state["whichprops"]):
+        #     errstr += f"{i:2d} : {val}\n"
+        # sys.stderr.write( errstr )
+        # ARGH.  web.py has, I think, irritating handling of list parameters.
+        # I'd call it a bug.
+        if ( len(self.state["whichprops"]) == 1 ) and ( self.state["whichprops"][0][0:2] == "['" or
+                                                        self.state["whichprops"][0][0:2] == '["' ):
+            self.state["whichprops"][0] = self.state["whichprops"][0][2:-2]
+        # errstr = f"After hacking: type(whichprops)={type(self.state['whichprops'])}\n"
+        # for i, val in enumerate(self.state["whichprops"]):
+        #     errstr += f"{i:2d} : {val}\n"
+        # sys.stderr.write( errstr )
+        # sys.stderr.write( f'whichprops = {self.state["whichprops"]}' )
+                
     # ========================================
 
     def prevnext( self, state, numobjs, formtarget="showexp" ):
@@ -184,14 +199,20 @@ class HandlerBase(object):
 
         setallunsetbadbutton = ""
         if goodbad is not None:
-            notgoodbadset = []
-            for row in rows:
-                if not row["oid"] in goodbad:
-                    notgoodbadset.append( str(row["oid"]) )
+            # notgoodbadset = []
+            # for row in rows:
+            #     if not row["oid"] in goodbad:
+            #         notgoodbadset.append( str(row["oid"]) )
             setallunsetbadbutton = "<p>"
-            setallunsetbadbutton += form.Button( name="makethingsbad", html="Make All Unset Bad",
-                                                 onclick="setallbad(\"{}\", \"{}\", [{}])"
-                                                 .format( user, passwd, ",".join(notgoodbadset) ) ).render()
+            button = form.Button( name="makethingsbad", html="Make All Unset Bad", )
+            # I'm using something undocumented in web.py here, which is very dangerous
+            # (Documentation is very sparse.)
+            button.attrs['data-user'] = user
+            button.attrs['data-password'] = passwd
+            setallunsetbadbutton += button.render()
+            # setallunsetbadbutton += form.Button( id="makethingsbad", html="Make All Unset Bad",
+            #                                      onclick="setallbad(\"{}\", \"{}\", [{}])"
+            #                                      .format( user, passwd, ",".join(notgoodbadset) ) ).render()
             setallunsetbadbutton += "</p>"
 
         self.response += setallunsetbadbutton
@@ -253,18 +274,14 @@ class HandlerBase(object):
                     if goodbad[objid] == "bad":
                         isbad = True
                 self.response += "<td>\n"
-                self.response += "<input type=\"radio\" value=\"good\" "
-                self.response += "name=\"{obj}statusset\" id=\"{obj}statusgood\" ".format( obj=objid )
-                self.response += ( "onchange=\"sendgoodbad( &quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;, "
-                                   "&quot;good&quot; )\" ".format( user, passwd, objid ) )
-                self.response += "{}>\n".format( "checked" if isgood else "" )
-                self.response += "  <label for=\"{obj}statussgood\">Good</label><br>\n".format( obj=objid )
-                self.response += "<input type=\"radio\" value='bad' "
-                self.response += "name=\"{obj}statusset\" id=\"{obj}statusbad\" ".format( obj=objid )
-                self.response += ( "onchange=\"sendgoodbad( &quot;{}&quot;, &quot;{}&quot;, &quot;{}&quot;, "
-                                   "&quot;bad&quot; )\"".format( user, passwd, objid ) )
-                self.response += "{}>\n".format( "checked" if isbad else "" )
-                self.response += "  <label for=\"{obj}statussbad\">Bad</label><br>\n".format( obj=objid )
+                self.response += ( f'<input type="radio" value="good" name="{objid}statusset" '
+                                   f'id="{objid}statusgood" data-user="{user}" data-password="{passwd}" '
+                                   f'data-objid="{objid}" data-goodbad="good">\n' )
+                self.response += "<label for=\"{obj}statussgood\">Good</label><br>\n".format( obj=objid )
+                self.response += ( f'<input type="radio" value="bad" name="{objid}statusset" '
+                                   f'id="{objid}statusbad" data-user="{user}" data-password="{passwd}" '
+                                   f'data-objid="{objid}" data-goodbad="bad">\n' )
+                self.response += "<label for=\"{obj}statussbad\">Bad</label><br>\n".format( obj=objid )
                 self.response += "Current: "
                 if isgood:
                     self.response += "<span id=\"{}status\" class=\"good\">Good</span>\n".format(objid)
@@ -340,16 +357,29 @@ class FrontPage(HandlerBase):
         self.response += form.Input( name="date0", value=self.state["date0"], type="text" ).render()
         self.response += "\n&nbsp;&nbsp;to&nbsp;&nbsp;\n"
         self.response += form.Input( name="date1", value=self.state["date1"], type="text" ).render() + "</p>\n"
-        self.response += "<p>" + form.Checkbox( name="onlygallat", value=self.state["onlygallat"] ).render()
-        self.response += form.Dropdown( name="gallatincexc", args=[ ("inc","Only Include"),
-                                                                    ("exc", "Exclude") ],
-                                        value=self.state["gallatincexc"] ).render()
-        self.response += "&nbsp;galactic latitude between&nbsp;"
-        self.response += form.Input( name="minb", type="text", size="4", value=self.state["minb"] ).render()
-        self.response += "°&nbsp;and&nbsp;"
-        self.response += form.Input( name="maxb", type="text", size="4", value=self.state["maxb"] ).render()
-        self.response += "°</p>\n<p>"
-        self.response += form.Input( name="submit", type="submit", value="List Exposures" ).render()
+        # self.response += "<p>" + form.Checkbox( name="onlygallat", value=self.state["onlygallat"] ).render()
+        # self.response += form.Dropdown( name="gallatincexc", args=[ ("inc","Only Include"),
+        #                                                             ("exc", "Exclude") ],
+        #                                 value=self.state["gallatincexc"] ).render()
+        # self.response += "&nbsp;galactic latitude between&nbsp;"
+        # self.response += form.Input( name="minb", type="text", size="4", value=self.state["minb"] ).render()
+        # self.response += "°&nbsp;and&nbsp;"
+        # self.response += form.Input( name="maxb", type="text", size="4", value=self.state["maxb"] ).render()
+        # self.response += "°</p>\n<p>"
+        self.response += "<br>" + form.Dropdown( name="allpropornot", id="allpropornot",
+                                                args=[ ("inc","Include all proposal IDs"),
+                                                       ("some","Only proposal IDs:") ],
+                                                value=self.state["allpropornot"] ).render()
+        self.response += "<div id=\"whichprops_div\" style=\"display: none\">\n"
+        for propid,displayprop in [ ('2021A-0113', '2021A-0113: Graham DDF Spring 2021'),
+                                    ('2021B-0149', '2021B-0149: Graham DDF Fall 2021'),
+                                    ('2021A-0275', '2021A-0275: Rest YSE'),
+                                    ('2020B-0053', '2020B-0053: Brount DEBASS') ]:
+            self.response += "\n<br>" + form.Checkbox( id=f"whichprops_{propid}", name="whichprops", value=propid,
+                                                       checked=(propid in self.state["whichprops"]) ).render()
+            self.response += f"\n<label for=\"whichprops_{propid}\">{displayprop}</label>"
+        self.response += "\n</div>\n"
+        self.response += "<p>" + form.Input( name="submit", type="submit", value="List Exposures" ).render()
         self.response += "</p>\n</form>\n"
 
         self.response += "<hr>\n"
@@ -437,7 +467,7 @@ class FrontPage(HandlerBase):
         self.response += "</p>\n</form>\n"
         
         self.htmlbottom()
-        sys.stderr.write( "About to return self.response\n" )
+        # sys.stderr.write( "About to return self.response\n" )
         return self.response
         
 # ======================================================================
@@ -688,10 +718,12 @@ class ListExposures(HandlerBase):
             self.state["date1"] = "2999-12-31"
         date0 = self.state["date0"].strip()
         date1 = self.state["date1"].strip()
-        limitbygallat = self.state["onlygallat"]
-        excludelatrange = self.state["gallatincexc"] == "exc"
-        minb = float( self.state["minb"] )
-        maxb = float( self.state["maxb"] )
+        includeallprops = self.state["allpropornot"] == "inc"
+        whichprops = self.state["whichprops"]
+        # limitbygallat = self.state["onlygallat"]
+        # excludelatrange = self.state["gallatincexc"] == "exc"
+        # minb = float( self.state["minb"] )
+        # maxb = float( self.state["maxb"] )
             
         try:    
             t0 = dateutil.parser.parse( date0 )
@@ -718,34 +750,45 @@ class ListExposures(HandlerBase):
         self.back_to_home()
         
         self.response += "<h4>Exposures from {} to {}\n".format( t0.isoformat(), t1.isoformat() )
-        if limitbygallat:
-            self.response += "excluding " if excludelatrange else "with "
-            self.response += "{:.2f} ≤ b ≤ {:.2f}".format( minb, maxb )
+        # if limitbygallat:
+        #     self.response += "excluding " if excludelatrange else "with "
+        #     self.response += "{:.2f} ≤ b ≤ {:.2f}".format( minb, maxb )
         self.response += "</h4>\n"
+
+        if self.state['allpropornot'] == "some":
+            self.response += ( f"<p style=\"font-weight: bold\">Including proposal"
+                               f"{'' if len(self.state['whichprops'])==1 else 's'} "
+                               f" {','.join(self.state['whichprops'])}</p>\n" )
             
         exposures = {}
         exporder = []
         
         # sys.stderr.write("ListExposures about to send DB query\n")
-        cursor = self.db.cursor( )
-        query = ( "SELECT e.filename,e.filter,COUNT(s.id) FROM exposures e "
+        cursor = self.db.cursor( cursor_factory = psycopg2.extras.DictCursor )
+        query = ( "SELECT e.filename,e.filter,e.proposalid,COUNT(s.id) AS nsubs FROM exposures e "
                   "LEFT JOIN subtractions s ON s.exposure_id=e.id "
-                  "WHERE e.mjd>=%s AND e.mjd<=%s " )
-        if limitbygallat:
-            if excludelatrange:
-                query += "AND ( e.gallat<%s OR e.gallat>%s ) "
-            else:
-                query += "AND e.gallat>%s AND e.gallat<%s "
+                  "WHERE e.mjd>=%(mjd0)s AND e.mjd<=%(mjd1)s " )
+        if self.state["allpropornot"] == "some":
+            query += "AND proposalid IN %(propids)s "
+        # if limitbygallat:
+        #     if excludelatrange:
+        #         query += "AND ( e.gallat<%s OR e.gallat>%s ) "
+        #     else:
+        #         query += "AND e.gallat>%s AND e.gallat<%s "
                 
-        query += "GROUP BY e.filename,e.filter,e.mjd,e.gallat ORDER BY e.mjd"
-        if limitbygallat:
-            cursor.execute(query, (mjd0, mjd1, minb, maxb) )
-        else:
-            cursor.execute(query, (mjd0, mjd1) )
+        query += "GROUP BY e.filename,e.filter,e.mjd,e.gallat,e.proposalid ORDER BY e.mjd"
+        # if limitbygallat:
+        #     cursor.execute(query, (mjd0, mjd1, minb, maxb) )
+        # else:
+        cursor.execute(query, {'mjd0': mjd0,
+                               'mjd1': mjd1,
+                               'propids': tuple(self.state['whichprops']) } )
         rows = cursor.fetchall()
         for row in rows:
-            exporder.append( row[0] )
-            exposures[ row[0] ] = { "filter": row[1], "nsubs": row[2] }
+            exporder.append( row['filename'] )
+            exposures[ row['filename'] ] = { "filter": row['filter'],
+                                             "proposalid": row['proposalid'],
+                                             "nsubs": row['nsubs'] }
 
         if len(exporder) == 0:
             self.response += "<p>No exposures!</p>\n"
@@ -753,19 +796,19 @@ class ListExposures(HandlerBase):
             cursor.close()
             return self.response
             
-        query = ( "SELECT filename,ra,dec,header->'EXPTIME' FROM exposures WHERE filename IN %s" )
+        query = ( "SELECT filename,ra,dec,header->'EXPTIME' AS exptime FROM exposures WHERE filename IN %s" )
         # sys.stderr.write( "{}\n".format( cursor.mogrify( query, ( tuple(exporder), ) ) ) )
         cursor.execute( query, ( tuple(exporder), ) )
         rows = cursor.fetchall()
         for row in rows:
-            if not row[0] in exposures:
+            if not row['filename'] in exposures:
                 sys.stderr.write("WARNING: exposure {} found in object query, not ra/dec query!"
-                                 .format( row[0] ))
-            exposures[ row[0] ]["ra"] = float( row[1] )
-            exposures[ row[0] ]["dec"] = float( row[2] )
-            exposures[ row[0] ]["exptime"] = float( row[3] )
+                                 .format( row['filename'] ))
+            exposures[ row['filename'] ]["ra"] = float( row['ra'] )
+            exposures[ row['filename'] ]["dec"] = float( row['dec'] )
+            exposures[ row['filename'] ]["exptime"] = float( row['exptime'] )
             
-        query = ( "SELECT e.filename,COUNT(o.id) FROM OBJECTS o "
+        query = ( "SELECT e.filename,COUNT(o.id) AS nobjs FROM OBJECTS o "
                   "INNER JOIN subtractions s ON o.subtraction_id=s.id "
                   "RIGHT JOIN exposures e ON s.exposure_id=e.id "
                   "WHERE e.filename IN %s "
@@ -774,14 +817,14 @@ class ListExposures(HandlerBase):
         cursor.execute( query, ( tuple(exporder), ) )
         rows = cursor.fetchall()
         for row in rows:
-            if not row[0] in exposures:
+            if not row['filename'] in exposures:
                 sys.stderr.write("WARNING: exposure {} found in object query, not subtraction query!"
                                  .format( row[0] ))
-                exposures[ row[0] ] = { "nsubs": "??" }
-                exporder.append( row[0] )    # will be out of order!!!!!
-            exposures[ row[0] ]["nobjs"] = row[1]
+                exposures[ row['filename'] ] = { "nsubs": "??" }
+                exporder.append( row['filename'] )    # will be out of order!!!!!
+            exposures[ row['filename'] ]["nobjs"] = row["nobjs"]
 
-        query = ( "SELECT e.filename,COUNT(o.id) FROM OBJECTS o "
+        query = ( "SELECT e.filename,COUNT(o.id) AS nhighrb FROM OBJECTS o "
                   "INNER JOIN subtractions s ON o.subtraction_id=s.id "
                   "RIGHT JOIN exposures e ON s.exposure_id=e.id "
                   "WHERE o.rb>=0.6 AND e.filename IN %s"
@@ -790,27 +833,27 @@ class ListExposures(HandlerBase):
         cursor.execute( query, ( tuple(exporder), ) )
         rows = cursor.fetchall()
         for row in rows:
-            exposures[ row[0] ]["nhighrb"] = row[1]
+            exposures[ row['filename'] ]["nhighrb"] = row['nhighrb']
 
         # Count the number that have made it through event id type "objectslogged" (27)
-        query = ( "SELECT e.filename,COUNT(p.id) FROM exposures e "
+        query = ( "SELECT e.filename,COUNT(p.id) AS nfinished FROM exposures e "
                   "INNER JOIN processcheckpoints p ON e.id=p.exposure_id "
                   "WHERE e.filename IN %s AND p.event_id=27 "
                   "GROUP BY e.filename" )
         cursor.execute( query, ( tuple(exporder), ) )
         rows = cursor.fetchall()
         for row in rows:
-            exposures[ row[0] ]["nfinished"] = row[1]
+            exposures[ row['filename'] ]["nfinished"] = row['nfinished']
 
         # Count the number that have errors (999)
-        query = ( "SELECT e.filename,COUNT(p.id) FROM exposures e "
+        query = ( "SELECT e.filename,COUNT(p.id) AS nerrors FROM exposures e "
                   "INNER JOIN processcheckpoints p ON e.id=p.exposure_id "
                   "WHERE e.filename IN %s AND p.event_id=999 "
                   "GROUP BY e.filename" )
         cursor.execute( query, ( tuple(exporder), ) )
         rows = cursor.fetchall()
         for row in rows:
-            exposures[ row[0] ]["nerrors"] = row[1]
+            exposures[ row['filename'] ]["nerrors"] = row['nerrors']
             
         cursor.close()
             
@@ -826,8 +869,9 @@ class ListExposures(HandlerBase):
         self.response += " show manual vetting?</p>\n<p>"
         # self.hidden_state( omit=["ccds", "orderby", "showrb", "showvetting" ] )
 
+        self.response += f"{len(exporder)} exposures<br>\n"
         self.response += "<table class=\"exposurelist\">\n"
-        self.response += ( "<tr><th>Exposure</th><th>Filter</th><th>t_exp</th>"
+        self.response += ( "<tr><th>Exposure</th><th>Filter</th><th>propid</th><th>t_exp</th>"
                            "<th>ra</th><th>dec</th><th>l</th><th>b</th>"
                            "<th>#Subs</th><th>#Done</th><th>N. Objects</th>"
                            "<th>rb>=0.6</th></tr>\n" )
@@ -836,28 +880,29 @@ class ListExposures(HandlerBase):
             dec = exposures[exp]["dec"]
             l,b = radectolb( ra, dec )
             self.response += '<tr><td>{exp}</td>\n'.format(exp=exp);
-            self.response += "  <td>{}</td>\n".format( exposures[exp]["filter"] )
-            self.response += "  <td>{}</td>\n".format( exposures[exp]["exptime"] )
-            self.response += '  <td>{}</td>\n'.format(dtohms(ra))
-            self.response += '  <td>{}</td>\n'.format(dtodms(dec))
-            self.response += '  <td>{:.02f}</td>\n'.format(l)
-            self.response += '  <td>{:.02f}</td>\n'.format(b)
-            self.response += "  <td>{}</td>\n".format( exposures[exp]["nsubs"] )
+            self.response += f"  <td>{exposures[exp]['filter']}</td>\n"
+            self.response += f"  <td>{exposures[exp]['proposalid']}</td>\n"
+            self.response += f"  <td>{exposures[exp]['exptime']}</td>\n".format( )
+            self.response += f'  <td>{dtohms(ra)}</td>\n'
+            self.response += f'  <td>{dtodms(dec)}</td>\n'
+            self.response += f'  <td>{l:.02f}</td>\n'
+            self.response += f'  <td>{b:.02f}</td>\n'
+            self.response += f"  <td>{exposures[exp]['nsubs']}</td>\n"
             if "nfinished" in exposures[exp]:
-                self.response += "  <td>{}</td>\n".format( exposures[exp]["nfinished"] )
+                self.response += f"  <td>{exposures[exp]['nfinished']}</td>\n"
             else:
                 self.response += "  <td>—</td>\n"
-            self.response += "  <td>{}</td>\n".format( exposures[exp]["nobjs"] )
+            self.response += f"  <td>{exposures[exp]['nobjs']}</td>\n"
             if "nhighrb" in exposures[exp]:
-                self.response += "  <td>{}</td>\n".format( exposures[exp]["nhighrb"] )
+                self.response += f"  <td>{exposures[exp]['nhighrb']}</td>\n"
             else:
                 self.response += "  <td>—</td>\n"
-            self.response += ( "  <td><button type=\"submit\" name=\"submit\" value=\"Show Objects\" "
-                               "onclick=\"showobjects('{}')\">Show Objects</button></td>\n".format( exp ) )
-            self.response += ( "  <td><button type=\"submit\" name=\"submit\" value=\"Show Log\" "
-                               "onclick=\"showlog('{}')\">Show Log</button></td>\n".format( exp ) )
+            self.response += ( f"  <td><button type=\"submit\" name=\"showobjects\" value=\"Show Objects\" "
+                               f"data-exposure=\"{exp}\">Show Objects</button></td>\n" )
+            self.response += ( f"  <td><button type=\"submit\" name=\"showlog\" value=\"Show Log\" "
+                               f"data-exposure=\"{exp}\">Show Log</button></td>\n" )
             if ( "nerrors" in exposures[exp] ) and ( exposures[exp]["nerrors"] > 0 ):
-                self.response += ( "  <td class=\"bad\">{} errors</td>\n".format( exposures[exp]["nerrors"] ) )
+                self.response += f"  <td class=\"bad\">{exposures[exp]['nerrors']} errors</td>\n"
             self.response += "</tr>\n"
             
         self.response += "</table>\n"
@@ -1363,23 +1408,36 @@ class SetGoodBad(HandlerBase):
             rval =  { "error": "User \"{}\" multiply defined!".format( user ) }
         if rows[0]["password"] != data["password"]:
             rval = { "error": "Incorrect password for {}".format(user) }
-            
-        objid = int(data["obj"])
-        if data["status"] == "good": goodbad = True
-        elif data["status"] == "bad": goodbad = False
-        else:
-            rval = { "error": "{} is neither good nor bad".format( data["status"] ) }
-            return json.dumps(rval)
 
-        pkey = "{}_{}".format( objid, data["user"] )
-        query = ( "INSERT INTO scanscore(id,object_id,username,goodbad) VALUES(%s,%s,%s,%s) "
-                  "ON CONFLICT ON CONSTRAINT scanscore_pkey DO UPDATE SET goodbad=%s" )
         cursor = self.db.cursor()
-        cursor.execute( query, ( pkey, objid, data["user"], data["status"], data["status"] ) )
+        for status, strobjid in zip(data["status"], data["obj"]):
+            objid = int(strobjid)
+            if status == "good": goodbad = True
+            elif status == "bad": goodbad = False
+            else:
+                rval = { "error": "{} is neither good nor bad".format( data["status"] ) }
+                return json.dumps(rval)
+
+            pkey = "{}_{}".format( objid, data["user"] )
+            query = ( "INSERT INTO scanscore(id,object_id,username,goodbad) VALUES(%s,%s,%s,%s) "
+                      "ON CONFLICT ON CONSTRAINT scanscore_pkey DO UPDATE SET goodbad=%s" )
+            cursor.execute( query, ( pkey, objid, data["user"], status, status ) )
         self.db.commit()
         cursor.close()
 
-        rval = { "objid": objid, "status": "good" if goodbad else "bad" }
+        # This is hopefully reudndant, but read the status back
+        cursor = self.db.cursor(  cursor_factory = psycopg2.extras.DictCursor )
+        query = ( "SELECT object_id,username,goodbad FROM scanscore "
+                  "WHERE username=%(user)s AND object_id IN %(objids)s" )
+        cursor.execute( query, { 'user': data["user"], 'objids': tuple(data["obj"]) } )
+        rows = cursor.fetchall()
+        if len(rows) != len(data["obj"]):
+            rval = { "error": f"Read back {len(rows)} statuses when expected {len(data['obj'])}; "
+                     f"the database might be OK, but this page is mucked up now.  Go back." }
+            return json.dumps(rval)
+        rval = { "objid": [ row['object_id'] for row in rows ],
+                 "status": [ row['goodbad'] for row in rows ] }
+        cursor.close()
         return json.dumps(rval)
         
 

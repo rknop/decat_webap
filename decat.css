@@ -12,10 +12,21 @@
     --tooltip-background: #ffff66;
     --tooltip-border: #0000ff;
     --tooltip-color: black;
+    --good-color: #00c000;
+    --bad-color: #c00000;
+    --warning-color: #c06040;
 }
 
 body { color: var(--main-color) }
 a { color: var(--link-color); text-decoration: var(--link-decoration); }
+
+table { border: 2px solid var(--full-color-border); border-spacing: 2px }
+table th { border-bottom: 2px solid var(--full-color-border); font-weight: bold }
+table td { border-bottom: 2px solid var(--half-faded-color);
+           border-spacing: 2px;
+           padding: 2px;
+           padding-left: 0.5ex;
+           padding-right: 0.5ex; }
 
 table.maintable { border: 2px solid black; border-spacing: 2px }
 table.maintable th { border-bottom: 2px solid black; font-weight: bold }
@@ -55,8 +66,9 @@ td.vettinglist { border: 2px solid var(--half-faded-color);
                  padding-right: 2px;
                }
 
-.good { font-weight: bold; color: #00c000; }
-.bad { font-weight: bold; color: #c00000; }
+.good { font-weight: bold; color: var(--good-color); }
+.bad { font-weight: bold; color: var(--bad-color); }
+.warning { font-weight: bold; color: var(--warning-color); }
 
 .link { background: none;
         border: none;

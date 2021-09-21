@@ -1,20 +1,38 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-# DON'T EDIT decatview.py, INSTEAD EDIT decatview.py.in
+# DON'T EDIT decat_gal.py, INSTEAD EDIT decat_gal.py.in
 
 import sys
 import math
 import web
+from web import form
+import psycopg2
+import psycopg2.extras
+from datetime import datetime
+import dateutil.parser
+import pytz
 
-# web.ctx has the filename, but doesn't
-#   exist until an application's been called.
-if not "/var/www/raknop/decat/view" in sys.path:
-    sys.path.insert(0, "/var/www/raknop/decat/view")
+if not "@pythonpathdir@" in sys.path:
+    sys.path.insert(0, "@pythonpathdir@")
 
-from webapconfig import galapfullurl, webapdir, webapdirurl, DBdata
-from util import dtohms, dtodms, radectolb, mjd, dateofmjd, parsedms, sanitizeHTML
+from webapconfig import galapfullurl, webapdir, webapdirurl, DBdata, DBname
+from util import dtohms, dtodms, radectolb, mjd, dateofmjd, parsedms, sanitizeHTML, asDateTime, ErrorMsg
 
+# ======================================================================
+# These constants need to match the database definition and what's in
+# the lensgridner db class.
+
+class GalStatusDef:
+    INPROGRESS = 0
+    COMPLETED = 1
+    FAILED = 2
+
+class GalCheckpoint:
+    STARTED = 0
+    WARNING = 98
+    ERROR = 99
+    
 # ======================================================================
 
 class HandlerBase(object):
@@ -22,17 +40,18 @@ class HandlerBase(object):
         self.response = ""
         self.idordinal = 0
         
-        with open(DBdata) as ifp:
+        with open( f'{DBdata}/dbuser' ) as ifp:
             user = ifp.readline().strip()
+        with open( f'{DBdata}/dbpasswd' ) as ifp:
             password = ifp.readline().strip()
+        with open( f'{DBdata}/dbhost' ) as ifp:
             host = ifp.readline().strip()
+        with open( f'{DBdata}/dbport' ) as ifp:
             port = ifp.readline().strip()
+        with open( f'{DBdata}/{DBname}' ) as ifp:
             database = ifp.readline().strip()
-        # sys.stderr.write("viewxps.py connecting to database with dbname='{}' user='{}' host='{}' password='{}'\n"
-        #                  .format( database, user, host, password ))
         self.db = psycopg2.connect("dbname='{}' user='{}' host='{}' password='{}'"
                                    .format( database, user, host, password ))
-        # sys.stderr.write("db.status is {}\n".format(self.db.status))
 
     def finalize(self):
         self.db.close()
@@ -48,13 +67,37 @@ class HandlerBase(object):
     def htmlbottom(self):
         self.response += "\n</body>\n</html>\n"
 
-    def GET( self ):
-        response = self.do_the_things()
+    def hidden_state( self, omit=[] ):
+        """Print a bunch of hidden inputs to preserve app state.
+        
+        Omit things in the omit array; presumably those will be in
+        active form elements in the context that called this function.
+        """
+        for val in self.state:
+            if not val in omit:
+                self.response += form.Input( name=val, id="{}{}".format( val, self.idordinal ),
+                                             type="hidden", value=self.state[val] ).render() + "\n"
+        self.idordinal += 1
+
+    def set_state( self ):
+        # Set defaults for all internal variables we need to track throughout the webap
+        self.state = {
+            'workingstatus_whattoshow': 'notdone',
+            'workingstatus_start': '',
+        }
+        # Pull in the things that were in the web input (including hidden things)
+        self.webinput = web.input()
+        for stateval in self.state:
+            if stateval in self.webinput:
+                self.state[stateval] = self.webinput[stateval]
+        
+    def GET( self, *args, **kwargs ):
+        response = self.do_the_things( *args, **kwargs )
         self.finalize()
         return response
 
-    def POST( self ):
-        response = self.do_the_things()
+    def POST( self, *args, **kwargs ):
+        response = self.do_the_things( *args, **kwargs )
         self.finalize()
         return response
 
@@ -62,13 +105,202 @@ class HandlerBase(object):
 
 class FrontPage(HandlerBase):
     def do_the_things(self):
-        ROB YOU ARE HERE
+        web.header('Content-Type', 'text/html; charset="UTF-8"')
+        self.htmltop()
+        self.response += "<h1>DECaT LBL Galactic Pipline</h1>"
+        self.response += '<form method=\"POST\">\n'
+        self.response += "<h3>Show working status</h3>\n"
+        radiobuttons = form.Radio('workingstatus_whattoshow', value='notdone',
+                                  args=[ ( 'all', 'Show all entries' ),
+                                         ( 'notdone', 'Only non-completed entries' ) ] ).render()
+        # Hack in newlines
+        self.response += radiobuttons.replace("all entries", "all entries<br>")
+        self.response += "\n<br>\n"
+        self.response += "With status updates after: "
+        self.response += form.Textbox( 'workingstatus_start', value='', width=24 ).render()
+        self.response += " (YYYY-MM-DD HH:MM:SS)<br>"
+        self.response += form.Button( 'workingstatus_submit', type='submit',
+                                      html='Show Working Status',
+                                      formaction=f'{galapfullurl}workingstatus' ).render()
+
+        self.htmlbottom()
+        return self.response
+
+# ======================================================================
+
+class WorkingStatus(HandlerBase):
+    def do_the_things(self):
+        web.header('Content-Type', 'text/html; charset="UTF-8"')
+        self.htmltop()
+        self.set_state()
+        self.response += "<h1>DECaT LBL Galactic Pipeline: Working Status</h1>\n"
+        self.response += f"<p>As of {datetime.now(pytz.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC"
+
+        try:
+            withafter = asDateTime( self.state['workingstatus_start'] )
+        except ErrorMsg as e:
+            self.response += ( f"<p><b>ERROR</b> parsing "
+                               f"{sanitizeHTML(self.state['workingstatus_start'], oneline=True)} "
+                               f"as a date/time</p>\n" )
+            self.htmlbottom()
+            return self.response
+
+        if withafter is not None:
+            self.response += "<br>\nonly including exposures w/ updates after "
+            self.response += f'{withafter.astimezone(pytz.utc).strftime("%Y-%m-%d %H:%M:%S")} UTC'
+        self.response += "</p>\n"
         
+        cursor = self.db.cursor( cursor_factory = psycopg2.extras.DictCursor )
+        expids = None
+        if withafter is not None:
+            query = "SELECT DISTINCT galexposure_id FROM galworkingstatuss WHERE lastupdated>=%s"
+            if self.state['workingstatus_whattoshow'] == 'notdone':
+                query += f" WHERE status<>{GalStatusDef.COMPLETED}"
+            cursor.execute( query, (withafter, ) )
+            rows = cursor.fetchall()
+            expids = [ row['galexposure_id'] for row in rows ]
+
+        queryargs = tuple()
+        query = ( "SELECT s.id,e.id AS eid,e.filename,s.slurm_jobid,s.slurm_cluster,s.slurm_node,"
+                  "s.startstep,s.started,s.currentstep,s.lastupdated,s.status,s.statusmsg "
+                  "FROM galworkingstatuss s "
+                  "INNER JOIN galexposures e ON s.galexposure_id=e.id" )
+        if self.state['workingstatus_whattoshow'] == 'notdone':
+            query += f" WHERE status<>{GalStatusDef.COMPLETED}"
+        if expids is not None:
+            query += f" AND e.id IN %s"
+            queryargs = ( tuple(expids), )
+        query += " ORDER BY lastupdated DESC"
+        cursor.execute( query, queryargs )
+        rows = cursor.fetchall()
+        expids = [ row['eid'] for row in rows ]
+        expids = set( expids )
+        
+        maxstart = {}
+        numerrors = {}
+        numerrorssince = {}
+        for eid in expids:
+            numerrors[eid] = 0
+            numerrorssince[eid] = 0
+        query = ( f"SELECT e.id AS eid,c.checkpoint_id AS cid,c.checktime FROM galexposures e "
+                  f"INNER JOIN galcheckpoints c ON c.galexposure_id=e.id "
+                  f"WHERE c.checkpoint_id IN ({GalCheckpoint.STARTED},{GalCheckpoint.ERROR}) "
+                  f"AND e.id IN %s "
+                  f"ORDER BY eid,checktime" )
+        cursor.execute( query, (tuple(expids),) )
+        errrows = cursor.fetchall()
+        for row in errrows:
+            if row['cid'] == GalCheckpoint.STARTED:
+                maxstart[row['eid']] = row['checktime']
+        for row in errrows:
+            if ( row['cid'] == GalCheckpoint.ERROR ):
+                numerrors[row['eid']] += 1
+                if ( ( row['eid'] not in maxstart )
+                     or ( row['checktime'] >= maxstart[row['eid']] ) ):
+                    numerrorssince[row['eid']] += 1
+
+        if len(rows) == 0:
+            self.response += "<p><i>No status entries to show</i></p>\n"
+        else:
+            self.response += "<table>\n"
+            self.response += "<tr><th>Exposure</th><th>Cluster</th><th>Job ID</th>"
+            self.response += "<th>Init. Step</th><th>Started (UTC)</th>"
+            self.response += "<th>Current Step</th><th>Updated (UTC)</th><th>Status</th>"
+            self.response += "<th>errors</th><th>since start</th><th>Mesage</th></tr>\n"
+            for row in rows:
+                if row['started'].tzinfo is None:
+                    row['started'] = pytz.utc.localize( row['started'] )
+                starttime = row['started'].astimezone( pytz.utc ).strftime( '%Y-%m-%d %H:%M:%S' )
+                if row['lastupdated'].tzinfo is None:
+                    row['lastupdated'] = pytz.utc.localize( curtime )
+                curtime = row['lastupdated'].astimezone( pytz.utc) .strftime( '%Y-%m-%d %H:%M:%S' )
+                statusclass = ( "bad" if row['status']==GalStatusDef.FAILED else
+                                "good" if row['status']==GalStatusDef.COMPLETED else "warning" )
+                status = ( "failed" if row['status']==GalStatusDef.FAILED else
+                           "complete" if row['status']==GalStatusDef.COMPLETED else "working" )
+                errorclass = " class=\"bad\"" if numerrors[row['eid']] > 0 else ""
+                errorsinceclass = " class=\"bad\"" if numerrorssince[row['eid']] > 0 else ""
+                self.response += "<tr>\n"
+                self.response += f"  <td><a href=\"{galapfullurl}exposurelog/{row['eid']}\">"
+                self.response += f"{row['filename'].replace('.fits','').replace('.fz','')}</a></td>\n"
+                self.response += f"  <td>{row['slurm_cluster']}</td>\n"
+                self.response += f"  <td>{row['slurm_jobid']}</td>\n"
+                self.response += f"  <td>{row['startstep']}</td>\n"
+                self.response += f"  <td>{starttime}</td>\n"
+                self.response += f"  <td>{row['currentstep']}</td>\n"
+                self.response += f"  <td>{curtime}</td>\n"
+                self.response += f"  <td class=\"{statusclass}\">{status}</td>\n"
+                self.response += f"  <td{errorclass}>{numerrors[row['eid']]}</td>\n"
+                self.response += f"  <td{errorsinceclass}>{numerrorssince[row['eid']]}</td>\n"
+                self.response += f"  <td>{row['statusmsg']}</td>\n"
+                self.response += "</tr>\n"
+            self.response += "</table>"
+
+        self.htmlbottom()
+        return self.response
+                
+# ======================================================================
+
+class ExposureLog(HandlerBase):
+    def do_the_things( self, expid ):
+        web.header('Content-Type', 'text/html; charset="UTF-8"')
+        self.htmltop()
+        self.set_state()
+        cursor = self.db.cursor( cursor_factory = psycopg2.extras.DictCursor )
+        query = ( "SELECT c.id,e.filename,c.ccdnum,c.checkpoint_id,d.description,"
+                  "c.slurm_jobid,c.slurm_node,c.slurm_cluster,"
+                  "c.notes,c.val,c.checktime "
+                  "FROM galcheckpoints c "
+                  "INNER JOIN galexposures e ON c.galexposure_id=e.id "
+                  "INNER JOIN galcheckpointdefs d ON c.checkpoint_id=d.id "
+                  "WHERE c.galexposure_id=%s "
+                  "ORDER BY c.checktime" )
+        cursor.execute( query, (expid,) )
+        rows = cursor.fetchall()
+        if len(rows) == 0:
+            self.response = f"<p><b>No checkpoints for exposure id {sanitizeHTML(expid)}</b><</p>\n"
+            self.htmlbottom()
+            return self.response
+
+        expname = rows[0]['filename']
+        self.response += f"<h2>Galactic Pipeline Log for {sanitizeHTML(expname, oneline=True)}</h2>\n"
+
+        self.response += "<p>Jump to chip:"
+        for ccdnum in range(1,63):
+            self.response += f" <a href=\"#chip{ccdnum}\">{ccdnum}</a>"
+        self.response += "</p>"
+            
+        for ccdnum in range(1,63):
+            relevant = [ row for row in rows if (row['ccdnum'] == ccdnum) or (row['ccdnum'] == 0) ]
+            self.response += f"<h3 id=\"chip{ccdnum}\">Chip {ccdnum}</h3>\n"
+            self.response += "<table>\n"
+            self.response += "<tr><th>time (UTC)</th><th>Checkpoint</th><th>val</th><th>notes</th></tr>\n"
+            for row in relevant:
+                if row['checkpoint_id'] == GalCheckpoint.STARTED:
+                    self.response += "<tr class=\"good\">\n"
+                elif row['checkpoint_id'] == GalCheckpoint.ERROR:
+                    self.response += "<tr class=\"bad\">\n"
+                elif row['checkpoint_id'] == GalCheckpoint.WARNING:
+                    self.response += "<tr class=\"warning\">\n"
+                else:
+                    self.response += "<tr>\n"
+                self.response += f"  <td>{row['checktime'].strftime('%Y-%m-%d %H:%M:%S')}</td>\n"
+                self.response += f"  <td>{sanitizeHTML(row['description'], oneline=True)}</td>\n"
+                self.response += f"  <td>{row['val'] if row['val'] is not None else ''}</td>\n"
+                sys.stderr.write( f'type(row["notes"])={type(row["notes"])}, row["notes"]={row["notes"]}\n' )
+                self.response += f"  <td>{sanitizeHTML(row['notes'], oneline=True)}</td>\n"
+                self.response += "</tr>\n"
+            self.response += "</table>\n"
+                
+        self.htmlbottom()
+        return self.response
+
 # ======================================================================
 
 urls = (
-    '/', "FrontPage",
+    '/',                 "FrontPage",
+    '/workingstatus',    "WorkingStatus",
+    '/exposurelog/(.+)', "ExposureLog",
     )
 
 application = web.application(urls, globals()).wsgifunc()
-

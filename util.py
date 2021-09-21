@@ -1,17 +1,49 @@
+import sys
 import math
 import re
+from datetime import datetime
+import dateutil.parser
+import pytz
 
 # ======================================================================
 # Utility functions
 
+tagfinder = re.compile("^\<(\S+)\>$")
+ampfinder = re.compile("\&([^;\s]*\s)")
+ampendfinder = re.compile("\&([^;\s]*)$")
+ltfinder = re.compile("<((?!a\s*href)[^>]*\s)")
+ltendfinder = re.compile("<([^>]*)$")
+gtfinder = re.compile("((?<!\<a)\s[^<]*)>")
+gtstartfinder = re.compile("^([<]*)>");
+
+class ErrorMsg(Exception):
+    def __init__( self, text="error" ):
+        self.text = text
+
+def asDateTime( string ):
+    try:
+        if string is None:
+            return None
+        if isinstance( string, datetime ):
+            return string
+        string = string.strip()
+        sys.stderr.write( f'Looking at "{string}" with length {len(string)}\n' )
+        if len(string) == 0:
+            return None
+        dateval = dateutil.parser.parse( string )
+        return dateval
+    except Exception as e:
+        if hasattr( e, 'message' ):
+            sys.stderr.write( f'Exception in asDateTime: {e.message}\n' )
+        else:
+            sys.stderr.write( f'Exception in asDateTime: {e}\n' )
+        raise ErrorMsg( f'Error, {string} is not a valid date and time.' )
+
+
 def sanitizeHTML(text, oneline = False):
-    tagfinder = re.compile("^\<(\S+)\>$")
-    ampfinder = re.compile("\&([^;\s]*\s)")
-    ampendfinder = re.compile("\&([^;\s]*)$")
-    ltfinder = re.compile("<((?!a\s*href)[^>]*\s)")
-    ltendfinder = re.compile("<([^>]*)$")
-    gtfinder = re.compile("((?<!\<a)\s[^<]*)>")
-    gtstartfinder = re.compile("^([<]*)>");
+    global tagfinder, ampfinder, ampendfinder, ltfinder, ltendfinder, gtfinder, gtstartfinder
+    if text is None:
+        return ''
     
     def tagfilter(text):
         tagfinder = re.compile("^\<(\S+)\>$")
