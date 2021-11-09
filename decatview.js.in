@@ -91,6 +91,8 @@ decatview.init = function()
                                                                           elem.dataset.goodbad ) } );
         }
     }
+    let addvetcondition = document.getElementById( "Add Vet Condition" );
+    addvetcondition.addEventListener( "click", function() { decatview.addVetCondition(); } );
 }
 
 // **********************************************************************
@@ -236,6 +238,112 @@ decatview.echoGoodBad = function( statedata )
         }
     }
 }
+
+decatview.addVetCondition = function()
+{
+    let vetconds = document.getElementById( "vetconditions" );
+    let maxcond = 0;
+    for ( let kid of vetconds.children ) {
+        if ( kid.id.substring(0,7) != "vetcond" ) {
+            console.log( "Unrecognized div inside vetconditions: " + kd.id );
+        }
+        else {
+            let i = parseInt( kid.id.substring(7) );
+            if ( i >= maxcond ) {
+                maxcond = i+1;
+            }
+        }
+    }
+    let div = document.createElement( "div" );
+    div.id = "vetcond " + maxcond;
+    div.classList.add( "emmarginabove" )
+    vetconds.appendChild( div );
+
+    let condtype = document.createElement( "select" );
+    condtype.id = "vetcond " + maxcond + " type";
+    condtype.setAttribute( "name", condtype.id );
+    for ( let val of [ 'user', 'unanimous', 'majority' ] ) {
+        let opt = document.createElement( "option" );
+        opt.value = val;
+        opt.text = val;
+        condtype.add( opt );
+    }
+    div.appendChild( condtype );
+
+    let conduser = document.createElement( "input" );
+    conduser.id = "vetcond " + maxcond + " user";
+    conduser.setAttribute( "name", conduser.id );
+    conduser.setAttribute( "size", 10 );
+    div.appendChild( conduser );
+
+    let condgb = document.createElement( "select" );
+    condgb.id = "vetcond " + maxcond + " gb";
+    condgb.setAttribute( "name", condgb.id );
+    for ( let val of [ "good", "bad" ] ) {
+        let opt = document.createElement( "option" );
+        opt.value = val;
+        opt.text = val;
+        condgb.add( opt );
+    }
+    div.appendChild( condgb );
+
+    let condnumvetspan = document.createElement( "span" );
+    condnumvetspan.style.display = "none";
+    div.appendChild( condnumvetspan );
+    condnumvetspan.appendChild( document.createTextNode( " ≥" ) );
+    let condnumvets = document.createElement( "input" );
+    condnumvets.setAttribute( "type", "number" );
+    condnumvets.id = "vetcond " + maxcond + " numvets";
+    condnumvets.setAttribute( "name", condnumvets.id );
+    condnumvets.setAttribute( "min", 0 );
+    condnumvets.setAttribute( "size", 3 );
+    condnumvets.setAttribute( "value", 3 );
+    condnumvetspan.appendChild( condnumvets );
+    condnumvetspan.appendChild( document.createTextNode( " ratings" ) );
+
+    let condmindiffspan = document.createElement( "span" );
+    condmindiffspan.style.display = "none";
+    div.appendChild( condmindiffspan );
+    condmindiffspan.appendChild( document.createTextNode( "; min difference:" ) );
+    let condmindiff = document.createElement( "input" );
+    condmindiff.setAttribute( "type", "number" );
+    condmindiff.id = "vetcond " + maxcond + " mindiff";
+    condmindiff.setAttribute( "name", condmindiff.id );
+    condmindiff.setAttribute( "min", 1 );
+    condmindiff.setAttribute( "size", 3 );
+    condmindiff.setAttribute( "value", 2 );
+    condmindiffspan.appendChild( condmindiff );
+
+    let condrem = document.createElement( "button" );
+    condrem.id = "vetcond " + maxcond + " remove";
+    condrem.setAttribute( "name", condrem.id );
+    condrem.appendChild( document.createTextNode( "Remove Condition" ) );
+    div.appendChild( condrem );
+
+    condtype.addEventListener( 'change', function() {
+        if ( condtype.value == "user" ) {
+            conduser.style.display = "inline";
+            condnumvetspan.style.display = "none";
+            condmindiffspan.style.display = "none";
+        }
+        else if ( condtype.value == "unanimous" ) {
+            conduser.style.display = "none";
+            condnumvetspan.style.display = "inline";
+            condmindiffspan.style.display = "none";
+        }
+        else if ( condtype.value == "majority" ) {
+            conduser.style.display = "none";
+            condnumvetspan.style.display = "inline";
+            condmindiffspan.style.display = "inline";
+        }
+        else {
+            window.alert( "Unknown condition type " + condtype.value + "; you should never see this error." )
+        }
+    } )
+
+    condrem.addEventListener( 'click', function() { div.remove(); } );
+}
+
 
 // **********************************************************************
 // Startup code to hook up things

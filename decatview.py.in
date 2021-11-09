@@ -14,6 +14,7 @@ import random
 import json
 import psycopg2
 import psycopg2.extras
+import psycopg2.extensions
 import base64
 from io import BytesIO
 import uuid
@@ -23,6 +24,7 @@ import pytz
 import gzip
 import web
 import numpy
+import pandas
 from web import form
 import PIL
 import PIL.Image
@@ -32,6 +34,11 @@ if not "@pythonpathdir@" in sys.path:
 
 from webapconfig import webapfullurl, webapdir, webapdirurl, DBdata, DBname
 from util import dtohms, dtodms, radectolb, mjd, dateofmjd, parsedms, sanitizeHTML
+
+def adapt_numpy_int64( val ):
+        return psycopg2.extensions.AsIs( val )
+psycopg2.extensions.register_adapter( numpy.int64, adapt_numpy_int64 )
+    
 
 # ======================================================================
 
@@ -96,6 +103,7 @@ class HandlerBase(object):
                        # "gallatincexc": "exc",
                        # "minb": -20,
                        # "maxb": 20,
+                       "stackorindiv": "all",
                        "allpropornot": "inc",
                        "whichprops": [ '2021B-0149', '2021A-0275', '2020B-0053' ],
                        "showvetting": False,
@@ -126,13 +134,19 @@ class HandlerBase(object):
                        "user": None,
                        "password": None,
                        "vetfieldtype": None,
-                       "vetprerated": None
+                       "vetprerated": None,
+                       "vetted order": "random",
         }
         # ROB!  Remember to give defaults for the array quantities
         self.webinput = web.input( whichprops=self.state['whichprops'] )
         for stateval in self.state:
             if stateval in self.webinput:
                 self.state[stateval] = self.webinput[stateval]
+        # ROB!  This is terrible!  You really need a totally different
+        #  infrastructure
+        for key, value in self.webinput.items():
+            if key[0:7] == "vetcond":
+                self.state[key] = value
         # errstr = f"Before hacking: type(whichprops)={type(self.state['whichprops'])}\n"
         # for i, val in enumerate(self.state["whichprops"]):
         #     errstr += f"{i:2d} : {val}\n"
@@ -195,7 +209,7 @@ class HandlerBase(object):
 
     # ========================================
         
-    def objecttable( self, rows, showvetting=False, goodbad=None, user=None, passwd=None ):
+    def show_objecttable( self, objtable, vetdict=None, goodbad=None, user=None, passwd=None ):
 
         setallunsetbadbutton = ""
         if goodbad is not None:
@@ -223,18 +237,27 @@ class HandlerBase(object):
         self.response += "<table class=\"maintable\">\n"
         self.response += "<tr><th>Info</th><th>New</th><th>Ref</th><th>Sub</th></tr>\n"
         
-        for row in rows:
+        for dex, row in objtable.iterrows():
             candid = row["cid"]
-            objid = row["oid"]
+            objid = dex # row["oid"]
             rb = row["rb"]
             ra = row["ra"]
             dec = row["dec"]
             ccdnum = row["ccdnum"]
             filename = row["filename"]
-            scib64 = row["scijpg"].replace("\n","")
-            refb64 = row["refjpg"].replace("\n","")
-            diffb64 = row["diffjpg"].replace("\n","")
-            
+            if isinstance( row["scijpg"], str ):
+                scib64 = row["scijpg"].replace("\n","")
+            else:
+                scib64 = None
+            if isinstance( row["refjpg"], str ):
+                refb64 = row["refjpg"].replace("\n","")
+            else:
+                refb64 = None
+            if isinstance( row["diffjpg"], str ):
+                diffb64 = row["diffjpg"].replace("\n","")
+            else:
+                diffb64 = None
+                
             self.response += "<tr>\n"
             self.response += "<td>Candidate: "
             self.response += form.Button( name="candidate", id="candidate_button_{}".format(candid),
@@ -290,15 +313,16 @@ class HandlerBase(object):
                 else:
                     self.response += "<span id=\"{}status\"><i>(not set)</i></span>\n".format(objid)
 
-            elif showvetting and ( "vetting" in row ):
+            elif vetdict:
                 self.response += "<td class=\"vettinglist\">"
                 first = True
-                for username, score in row["vetting"].items():
-                    if first:
-                        first = False
-                    else:
-                        self.response += "<br>"
-                    self.response += "{username}: <span class=\"{score}\">{score}</span>".format( username=username,
+                if objid in vetdict:
+                    for username, score in vetdict[objid].items():
+                        if first:
+                            first = False
+                        else:
+                            self.response += "<br>"
+                        self.response += "{username}: <span class=\"{score}\">{score}</span>".format( username=username,
                                                                                                   score=score )
                 self.response += "</td>"
                     
@@ -315,7 +339,7 @@ class HandlerBase(object):
         if "password" not in data:
             rval = { "error": "No password given" }
             return json.dumps(rval)
-        cursor = self.db.cursor( cursor_factory = psycopg2.extras.DictCursor )
+        cursor = self.db.cursor( cursor_factory = psycopg2.extras.RealDictCursor )
         query = "SELECT username,password FROM scanusers WHERE username=%s"
         cursor.execute( query, ( data["user"], ) )
         rows = cursor.fetchall()
@@ -366,7 +390,12 @@ class FrontPage(HandlerBase):
         # self.response += "°&nbsp;and&nbsp;"
         # self.response += form.Input( name="maxb", type="text", size="4", value=self.state["maxb"] ).render()
         # self.response += "°</p>\n<p>"
-        self.response += "<br>" + form.Dropdown( name="allpropornot", id="allpropornot",
+        self.response += "<br>" + form.Dropdown( name="stackorindiv", id="stackorindiv",
+                                                 args=[ ("all", "Show both stacks and individual images"),
+                                                        ("indiv", "Show only individual images, not stacks"),
+                                                        ("stack", "Show only stacks, not individual images") ],
+                                                 value=self.state["stackorindiv"] ).render()
+        self.response += "<br><br>" + form.Dropdown( name="allpropornot", id="allpropornot",
                                                 args=[ ("inc","Include all proposal IDs"),
                                                        ("some","Only proposal IDs:") ],
                                                 value=self.state["allpropornot"] ).render()
@@ -460,9 +489,16 @@ class FrontPage(HandlerBase):
         self.response += "</form>\n"
 
         self.response += "<h3>Show vetted candidates</h3>\n"
-        self.response += "<p>(Gratuitously sorts by exposure, ccd, object id.  Will take a long time.)</p>"
+        self.response += form.Button( name="Add Vet Condition", id="Add Vet Condition",
+                                      html="Add Condition" ).render()
         self.response += "<form method=\"POST\" action=\"{}showrated\">\n".format( webapfullurl )
-        self.response += "<p>"
+        self.response += "<div id=\"vetconditions\">\n</div>\n"
+        self.response += "<p>Order by: "
+        self.response += form.Dropdown( name="vetted order", args=[ ("random", "Random Selections"),
+                                                                    ("standard", "MJD, CCDNUM, object_id" ) ],
+                                        value="standard" ).render()
+        self.response += "</p>\n"
+        self.response += "<p>(Gratuitously sorts by exposure, ccd, object id.  Could take a long time.)</p>"
         self.response += form.Input( name="submitshowvet", type="submit", value="Show Vetted Objects" ).render()
         self.response += "</p>\n</form>\n"
         
@@ -476,6 +512,10 @@ class FindCandidates(HandlerBase):
     def do_the_things(self):
         web.header('Content-Type', 'text/html; charset="UTF-8"')
         self.htmltop()
+        self.response += "<h2>Broken</h2>\n"
+        self.response += "<p>Finding candidates is currently broken, until Rob fixes its rb handling.</p>\n"
+        return self.response
+        
         self.set_state()
         
         minnum = int( self.state["mindet"] )
@@ -548,7 +588,7 @@ class FindCandidates(HandlerBase):
         self.response += ( "seen at ≥{} days apart with brightest mag. ≤{:.2f} and dimmest mag. ≥{:.2f}{}</h4>\n"
                            .format( mindays, minmag, maxmag, responsestr ) )
                            
-        cursor = self.db.cursor( cursor_factory = psycopg2.extras.DictCursor )
+        cursor = self.db.cursor( cursor_factory = psycopg2.extras.RealDictCursor )
 
         # One early days check suggested this returned 1/20 of the whole candidates table
         query = ( "SELECT c.id,count(o.id) AS countobj,max(o.rb) AS maxrb "
@@ -764,12 +804,16 @@ class ListExposures(HandlerBase):
         exporder = []
         
         # sys.stderr.write("ListExposures about to send DB query\n")
-        cursor = self.db.cursor( cursor_factory = psycopg2.extras.DictCursor )
+        cursor = self.db.cursor( cursor_factory = psycopg2.extras.RealDictCursor )
         query = ( "SELECT e.filename,e.filter,e.proposalid,COUNT(s.id) AS nsubs FROM exposures e "
                   "LEFT JOIN subtractions s ON s.exposure_id=e.id "
                   "WHERE e.mjd>=%(mjd0)s AND e.mjd<=%(mjd1)s " )
         if self.state["allpropornot"] == "some":
             query += "AND proposalid IN %(propids)s "
+        if self.state["stackorindiv"] == "indiv":
+            query += "AND NOT e.is_stack "
+        elif self.state["stackorindiv"] == "stack":
+            query += "AND e.is_stack "
         # if limitbygallat:
         #     if excludelatrange:
         #         query += "AND ( e.gallat<%s OR e.gallat>%s ) "
@@ -807,6 +851,7 @@ class ListExposures(HandlerBase):
             exposures[ row['filename'] ]["ra"] = float( row['ra'] )
             exposures[ row['filename'] ]["dec"] = float( row['dec'] )
             exposures[ row['filename'] ]["exptime"] = float( row['exptime'] )
+            exposures[ row['filename'] ]["nhighrb"] = "broken"
             
         query = ( "SELECT e.filename,COUNT(o.id) AS nobjs FROM OBJECTS o "
                   "INNER JOIN subtractions s ON o.subtraction_id=s.id "
@@ -824,16 +869,16 @@ class ListExposures(HandlerBase):
                 exporder.append( row['filename'] )    # will be out of order!!!!!
             exposures[ row['filename'] ]["nobjs"] = row["nobjs"]
 
-        query = ( "SELECT e.filename,COUNT(o.id) AS nhighrb FROM OBJECTS o "
-                  "INNER JOIN subtractions s ON o.subtraction_id=s.id "
-                  "RIGHT JOIN exposures e ON s.exposure_id=e.id "
-                  "WHERE o.rb>=0.6 AND e.filename IN %s"
-                  "GROUP BY e.filename,e.filter,e.mjd "
-                  "ORDER BY e.mjd " )
-        cursor.execute( query, ( tuple(exporder), ) )
-        rows = cursor.fetchall()
-        for row in rows:
-            exposures[ row['filename'] ]["nhighrb"] = row['nhighrb']
+        # query = ( "SELECT e.filename,COUNT(o.id) AS nhighrb FROM OBJECTS o "
+        #           "INNER JOIN subtractions s ON o.subtraction_id=s.id "
+        #           "RIGHT JOIN exposures e ON s.exposure_id=e.id "
+        #           "WHERE o.rb>=0.6 AND e.filename IN %s"
+        #           "GROUP BY e.filename,e.filter,e.mjd "
+        #           "ORDER BY e.mjd " )
+        # cursor.execute( query, ( tuple(exporder), ) )
+        # rows = cursor.fetchall()
+        # for row in rows:
+        #     exposures[ row['filename'] ]["nhighrb"] = row['nhighrb']
 
         # Count the number that have made it through event id type "objectslogged" (27)
         query = ( "SELECT e.filename,COUNT(p.id) AS nfinished FROM exposures e "
@@ -879,7 +924,8 @@ class ListExposures(HandlerBase):
             ra = exposures[exp]["ra"]
             dec = exposures[exp]["dec"]
             l,b = radectolb( ra, dec )
-            self.response += '<tr><td>{exp}</td>\n'.format(exp=exp);
+            fnameclass = "stack" if "stack" in exp else "notstack"
+            self.response += '<tr class=\"{fnameclass}\"><td>{exp}</td>\n'.format(exp=exp, fnameclass=fnameclass);
             self.response += f"  <td>{exposures[exp]['filter']}</td>\n"
             self.response += f"  <td>{exposures[exp]['proposalid']}</td>\n"
             self.response += f"  <td>{exposures[exp]['exptime']}</td>\n".format( )
@@ -941,6 +987,11 @@ class ShowExposure(HandlerBase):
         filename = self.state["exposure"]
         orderby = self.state["orderby"]
         showvetting = self.state["showvetting"]
+        rbtype = 1
+
+        cursor = self.db.cursor( cursor_factory = psycopg2.extras.RealDictCursor )
+
+        # First : get all objects on the requested CCDs of the exposure
         
         ccdarr = self.state["ccds"].split(",")
         if len(ccdarr) == 0: ccds = None
@@ -961,29 +1012,60 @@ class ShowExposure(HandlerBase):
                 for num in ccdnums:
                     if first: first=False
                     else: ccds += ","
-                    ccds += '{}'.format(num)
+                    ccds += '{:d}'.format(num)
                 ccds += ")"
 
-        query = ( "SELECT COUNT(o.id) "
+        query = ( "SELECT o.id AS oid,o.ra,o.dec,s.ccdnum,e.filename "
                   "FROM objects o "
                   "INNER JOIN subtractions s ON o.subtraction_id=s.id "
                   "INNER JOIN exposures e ON s.exposure_id=e.id "
                   "WHERE e.filename=%s " )
         if ccds is not None:
             query += " AND s.ccdnum IN {} ".format(ccds)
-        cursor = self.db.cursor( )
         # sys.stderr.write( "Sending query \"{}\"\n".format( cursor.mogrify( query, [ filename ] ) ) )
         cursor.execute( query, ( filename, ) )
-        row = cursor.fetchone()
-        cursor.close()
-        numobjs = int(row[0])
+        objtable = pandas.DataFrame( cursor.fetchall() )
+        objtable = objtable.set_index( 'oid' )
+        oids = objtable.index.unique(level=0).to_numpy()
+        numobjs = len( objtable )
 
+        # Next: get the rb values of these objects, as we might want to sort by them
+
+        query = "SELECT object_id,rb FROM objectrbs WHERE object_id IN %s AND rbtype_id=%s"        
+        cursor.execute( query, ( tuple(oids), rbtype ) )
+        rbtable = pandas.DataFrame( cursor.fetchall() )
+        rbtable = rbtable.set_index( "object_id" )
+        objtable = objtable.merge( rbtable, left_index=True, right_index=True, how='left' )
+
+        # Sort as desired
+
+        if orderby == "real/bogus":
+            objtable = objtable.sort_values( 'rb', ascending=False )
+        elif orderby == "objnum":
+            objtable = objtable.sort_index()
+            
+        # Subset
+
+        if offset < 0:
+            offset = 0
+        if offset >= numobjs:
+            offset = numobjs - 1
+        lastoff = offset + numperpage
+        if lastoff > numobjs:
+            lastoff = numobjs
+        objtable = objtable.iloc[offset:lastoff]
+        oids = objtable.index.unique(level=0).to_numpy()
+        
         self.prevnext( self.state, numobjs )
 
         self.response += "<h3>Exposure: {}</h3>\n".format( filename )
         self.response += "<h4>Candidates starting at offset {} out of {}</h4>\n".format( offset, numobjs )
 
-        query = ( "SELECT c.id as cid,o.id as oid,o.rb,o.ra,o.dec,s.ccdnum,e.filename, "  # tg.knopgood,tg.nugentgood,"
+        self.response += "<p><b>ROB</b>: Print information about r/b</p>"
+        
+        # Get the cutouts to show
+        
+        query = ( "SELECT c.id as cid,o.id as oid, "
                   "ENCODE(cu.sci_jpeg, 'base64') as scijpg, "
                   "ENCODE(cu.ref_jpeg, 'base64') as refjpg, "
                   "ENCODE(cu.diff_jpeg, 'base64') as diffjpg "
@@ -992,39 +1074,27 @@ class ShowExposure(HandlerBase):
                   "INNER JOIN subtractions s ON o.subtraction_id=s.id "
                   "INNER JOIN exposures e ON s.exposure_id=e.id "
                   "LEFT JOIN cutouts cu ON cu.object_id=o.id "
-                  # "LEFT JOIN tmpobjgood tg ON tg.objid=o.id "
-                  "WHERE e.filename=%s " );
-        if ccds is not None:
-            query += ' AND s.ccdnum IN {} '.format(ccds)
-        if orderby == "real/bogus":
-            query += " ORDER BY o.rb DESC "
-        elif orderby == "objnum":
-            query += " ORDER BY o.id "
-        query += " LIMIT %s OFFSET %s"
+                  "WHERE o.id IN %s " );
         # sys.stderr.write("Sending query \"{}\"\n".format(query))
-        cursor = self.db.cursor(  cursor_factory = psycopg2.extras.DictCursor )
-        cursor.execute( query, ( filename, numperpage, offset ) )
-        rows = cursor.fetchall()
-        cursor.close()
+        cursor.execute( query, ( tuple(oids), ) )
+        newtable = pandas.DataFrame( cursor.fetchall() )
+        newtable = newtable.set_index( "oid" )
+        objtable = objtable.merge( newtable, left_index=True, right_index=True, how='left' )
 
-        objects = [ dict(row) for row in rows ]
-        oids = [ o["oid"] for o in objects ]
-        objdict = {}
-        for obj in objects:
-            objdict[obj["oid"]] = obj
-        
+        vetdict = None
         if showvetting:
             query = "SELECT object_id,username,goodbad FROM scanscore WHERE object_id IN %s"
-            cursor = self.db.cursor( cursor_factory=psycopg2.extras.DictCursor )
             cursor.execute( query, ( tuple(oids), ) )
             rows = cursor.fetchall()
-            cursor.close()
+            vetdict = {}
             for row in rows:
-                if not "vetting" in objdict[row["object_id"]]:
-                    objdict[row["object_id"]]["vetting"] = {}
-                objdict[row["object_id"]]["vetting"][row["username"]] = row["goodbad"]
+                if not row["object_id"] in vetdict:
+                    vetdict[row["object_id"]] = {}
+                vetdict[row["object_id"]][row["username"]] = row["goodbad"]
                 
-        self.objecttable( objects, showvetting=showvetting )
+        cursor.close()
+            
+        self.show_objecttable( objtable, vetdict=vetdict )
         
         self.prevnext( self.state, numobjs )
 
@@ -1036,7 +1106,7 @@ class ShowExposure(HandlerBase):
                   "INNER JOIN exposures e ON p.exposure_id=e.id "
                   "LEFT JOIN checkpointeventdefs c ON p.event_id=c.id "
                   "WHERE e.filename=%s ORDER BY p.created_at" )
-        cursor = self.db.cursor( cursor_factory = psycopg2.extras.DictCursor )
+        cursor = self.db.cursor( cursor_factory = psycopg2.extras.RealDictCursor )
         cursor.execute( query, ( self.state["exposure"], ) )
         rows = cursor.fetchall()
         cursor.close()
@@ -1130,14 +1200,15 @@ class ShowCandidate(HandlerBase):
         web.header('Content-Type', 'text/html; charset="UTF-8"')
         self.htmltop()
         self.set_state()
-
+        rbtype = 1
+        
         self.back_to_home()
 
         self.response += "<h3>Candidate: {}</h3>\n".format( self.state["candidate"] )
         self.response += ( "<p>(<a href=\"{}showcand?candidate={}\">Share Link</a>)</p>\n"
                            .format( webapfullurl, self.state[ "candidate" ] ) )
 
-        cursor = self.db.cursor( cursor_factory = psycopg2.extras.DictCursor )
+        cursor = self.db.cursor( cursor_factory = psycopg2.extras.RealDictCursor )
         query = ( "SELECT * FROM candidates WHERE id=%s" )
         cursor.execute( query, ( self.state["candidate"], ) )
         rows = cursor.fetchall()
@@ -1148,7 +1219,9 @@ class ShowCandidate(HandlerBase):
             return self.response
         candidate = rows[0]
 
-        query= ( "SELECT o.id,o.ra,o.dec,o.created_at,o.modified,o.rb,o.mag,o.magerr, "
+        self.response += f"<h4>RA: {candidate['ra']}&nbsp;&nbsp;&nbsp;&nbsp;dec: {candidate['dec']}</h4>\n"
+        
+        query= ( "SELECT o.id,o.ra,o.dec,o.created_at,o.modified,o.mag,o.magerr, "
                  "e.filename,e.filter,e.mjd, "
                  "ENCODE(c.sci_jpeg, 'base64') as sci_jpeg, "
                  "ENCODE(c.ref_jpeg, 'base64') as ref_jpeg, "
@@ -1161,21 +1234,35 @@ class ShowCandidate(HandlerBase):
         # sys.stderr.write( "{}\n".format( cursor.mogrify( query, ( self.state["candidate"], ) ) ) )
         cursor.execute( query, ( self.state["candidate"], ) )
         rows = cursor.fetchall()
+        objecttable = pandas.DataFrame( rows )
+        objecttable = objecttable.set_index( 'id' )
+        oids = objecttable.index.unique(level=0).to_numpy()
+
+        query = "SELECT object_id,rb FROM objectrbs WHERE object_id IN %s AND rbtype_id=%s"
+        cursor.execute( query, ( tuple(oids), rbtype ) )
+        rbtable = pandas.DataFrame( cursor.fetchall() )
+        rbtable = rbtable.set_index( 'object_id' )
         cursor.close()
+
+        objecttable = objecttable.merge( rbtable, left_index=True, right_index=True, how='left' )
         
         self.response += ( "<p><a href=\"https://www.legacysurvey.org/viewer?ra={:.5f}&dec={:.5f}&zoom=16&layer=dr8&mark={:.5f},{:.5f}\">"
                            .format( rows[0]["ra"], rows[0]["dec"], rows[0]["ra"], rows[0]["dec"] ) )
         self.response += "Desi Viewer at this position</a></p>"
 
+
+        self.response += "<p><b>ROB</b>: Print information about r/b</p>"
         
         self.response += "<form method=\"post\" action=\"{}showexp\"></p>\n".format( webapfullurl )
         self.hidden_state( omit=["exposure"] )
         self.response += "<table class=\"maintable\">\n"
         self.response += "<tr><th>Exposure</th><th>New</th><th>Ref</th><th>Sub</th></tr>\n"
 
-        for row in rows:
+        for dex, row in objecttable.iterrows():
             # Make exposure a button that looks like a link
-            self.response += "<tr>\n<td>Exposure: {}<br>\n".format( row["filename"] )
+            self.response += ( "<tr>\n<td>Exposure: <span class=\"{spanclass}\">{filename}</span><br>\n"
+                               .format( filename=row["filename"],
+                                        spanclass="stack" if "stack" in row["filename"] else "" ) )
             self.response += "MJD: {}<br>\n".format( row["mjd"] )
             self.response += "Filter: {}<br>\n".format( row["filter"] )
             self.response += "Mag: {:.2f}±{:.2f}<br>\n".format( row["mag"], row["magerr"] )
@@ -1207,6 +1294,7 @@ class RateCands(HandlerBase):
         web.header('Content-Type', 'text/html; charset="UTF-8"')
         self.htmltop()
         self.set_state()
+        rbtype = 1
         self.back_to_home()
 
         rval = self.check_scan_user( self.webinput )
@@ -1216,13 +1304,15 @@ class RateCands(HandlerBase):
             self.htmlbottom()
             return self.response
 
-        cursor = self.db.cursor( cursor_factory = psycopg2.extras.DictCursor )
+        cursor = self.db.cursor( cursor_factory = psycopg2.extras.RealDictCursor )
 
+        # Figure out which objects we're gonna look at
+        
         if self.state["vetprerated"] == "yes":
             # Get a random set of candidates ranked by others not by us
-            query = ( "SELECT oid,users,exposure_id,cid,rb,ra,dec,ccdnum,filename FROM "
+            query = ( "SELECT oid,users,exposure_id,cid,ra,dec,ccdnum,filename FROM "
                       " ( SELECT ss.object_id as oid,array_agg(ss.username) as users, "
-                      "       subs.exposure_id,c.id as cid,o.rb,o.ra,o.dec,subs.ccdnum,e.filename "
+                      "       subs.exposure_id,c.id as cid,o.ra,o.dec,subs.ccdnum,e.filename "
                       "   FROM scanscore ss "
                       "   INNER JOIN objects o ON ss.object_id=o.id "
                       "   INNER JOIN candidates c ON o.candidate_id=c.id "
@@ -1232,13 +1322,13 @@ class RateCands(HandlerBase):
                 query += "   WHERE gallat < 20 AND gallat > -20 "
             else:
                 query += "   WHERE gallat >= 20 OR gallat <= -20 "
-            query += ( "   GROUP BY ss.object_id,subs.exposure_id,subs.ccdnum,c.id,o.rb,o.ra,o.dec,e.filename) x "
+            query += ( "   GROUP BY ss.object_id,subs.exposure_id,subs.ccdnum,c.id,o.ra,o.dec,e.filename) x "
                        "WHERE %s != ALL(users) "
                        "ORDER BY RANDOM() LIMIT 100" )
             # sys.stderr.write( 'Candidate selection query: {}\n'
             #                   .format( cursor.mogrify(query, (self.state['user'],)) ) )
             cursor.execute( query, ( self.state['user'], ) )
-            objects = cursor.fetchall()
+            objtable = pandas.DataFrame( cursor.fetchall() )
             # sys.stderr.write( "Objects fetched from query.\n" )
             
         else:
@@ -1258,7 +1348,7 @@ class RateCands(HandlerBase):
                 exposurenames[row["id"]] = row["filename"]
 
             # Randoly select 100 objects from this list of exposures
-            query = ( "SELECT c.id as cid,o.id as oid,o.rb,o.ra,o.dec,s.ccdnum,s.exposure_id "
+            query = ( "SELECT c.id as cid,o.id as oid,o.ra,o.dec,s.ccdnum,s.exposure_id "
                       "FROM OBJECTS o "
                       "INNER JOIN candidates c ON o.candidate_id=c.id "
                       "INNER JOIN subtractions s ON o.subtraction_id=s.id "
@@ -1266,28 +1356,20 @@ class RateCands(HandlerBase):
                       "ORDER BY RANDOM() LIMIT 100" )
             # sys.stderr.write( "Bigass query started at {}\n".format( time.ctime() ) )
             cursor.execute( query, ( tuple(expids), ) )
-            objects = cursor.fetchall()
+            objtable = pandas.DataFrame( cursor.fetchall() )
+            objtable["filename"] = objtable["exposure_id"].apply( lambda x: exposurenames[x] )
             # sys.stderr.write( "Objects fetched from query at {}\n".format( time.ctime() ) )
-
-        if len(objects) == 0:
+            
+        if len(objtable) == 0:
             self.response += "<p>No objects found matching criteria.</p>"
             self.htmlbottom()
             return self.response
             
-        if len(objects) < 100:
-            objects = [ dict(o) for o in objects ]
-        else:
-            objects = [ dict(o) for o in objects[0:100] ]
-        oids = [ o["oid"] for o in objects ]
-        objdict = {}
-        for obj in objects:
-            if "filename" not in obj:
-                obj["filename"] = exposurenames[obj["exposure_id"]]
-            obj["scijpg"] = None
-            obj["refjpg"] = None
-            obj["diffjpg"] = None
-            objdict[ obj["oid"] ] = obj
+        objtable = objtable.set_index( "oid" )
+        oids = objtable.index.unique(level=0).to_numpy()
 
+        # Get the cutouts
+        
         query = ( "SELECT o.id as oid, "
                   "ENCODE(cu.sci_jpeg, 'base64') as scijpg, "
                   "ENCODE(cu.ref_jpeg, 'base64') as refjpg, "
@@ -1296,16 +1378,20 @@ class RateCands(HandlerBase):
                   "WHERE o.id IN %s" )
         # sys.stderr.write( "Sending query {}\n".format( cursor.mogrify( query, ( tuple(oids), ) ) ) )
         cursor.execute( query, ( tuple(oids), ) )
-        rows = cursor.fetchall()
-        for row in rows:
-            oid = row["oid"]
-            if not oid in objdict:
-                sys.stderr.write( "WARNING: {} in cutouts query but not object list!\n".format( row["oid"] ) )
-            else:
-                objdict[oid]["scijpg"] = row["scijpg"]
-                objdict[oid]["refjpg"] = row["refjpg"]
-                objdict[oid]["diffjpg"] = row["diffjpg"]
+        cuttable = pandas.DataFrame( cursor.fetchall() )
+        cuttable = cuttable.set_index( "oid" )
+        objtable = objtable.merge( cuttable, left_index=True, right_index=True, how='left' )
 
+        # Get the rb values
+
+        query = "SELECT object_id,rb FROM objectrbs WHERE object_id IN %s AND rbtype_id=%s"
+        cursor.execute( query, ( tuple( oids ), rbtype ) )
+        rbtable = pandas.DataFrame( cursor.fetchall() )
+        rbtable = rbtable.set_index( "object_id" )
+        objtable = objtable.merge( rbtable, left_index=True, right_index=True, how='left' )
+        
+        # Get the goodbads
+        
         query = ( "SELECT object_id,goodbad FROM scanscore WHERE username=%s AND object_id IN %s" )
         cursor.execute( query, ( self.webinput["user"], tuple(oids) ) )
         rows = cursor.fetchall()
@@ -1313,12 +1399,14 @@ class RateCands(HandlerBase):
         for row in rows:
             goodbad[ row["object_id"] ] = row["goodbad"]
 
+        cursor.close()
+            
         self.response += '<form method=\"POST\" action=\"{}ratecands\">\n'.format( webapfullurl )
         self.hidden_state()
         self.response += "<p><button type=\"submit\">Give Me More</button></p>\n"
         self.response += "</form>"
             
-        self.objecttable( objects, goodbad=goodbad, user=self.webinput["user"], passwd=self.webinput["password"] )
+        self.show_objecttable( objtable, goodbad=goodbad, user=self.webinput["user"], passwd=self.webinput["password"] )
         
         self.response += '<form method=\"POST\" action=\"{}ratecands\">\n'.format( webapfullurl )
         self.hidden_state()
@@ -1331,23 +1419,109 @@ class RateCands(HandlerBase):
 # ======================================================================
 
 class ShowRatedObjs(HandlerBase):
+    matchcondtype = re.compile( "^vetcond (.*) type$" )
+    
     def do_the_things( self ):
         web.header('Content-Type', 'text/html; charset="UTF-8"')
         self.htmltop()
         self.set_state()
-
-        cursor = self.db.cursor( cursor_factory = psycopg2.extras.DictCursor )
-
-        # Get a count
-
+        rbtype = 1
+        
+        warning = ""
+        
         query = "SELECT COUNT(id) FROM ( SELECT object_id AS id FROM scanscore GROUP BY object_id ) AS x";
-        cursor.execute(query)
-        numobj = cursor.fetchone()[0]
-        
+        querywhere = ""
+        queryargs = []
+        queryusers = []
+        querygbs = []
+
+        userquery = False
+        countquery = False
+        for key, val in self.state.items():
+            match = self.matchcondtype.search( key )
+            if match is not None:
+                n = match.group(1)
+                condtype = self.state[key]
+                if countquery:
+                    warning += "<p><b>Warning:</b> Multiple conditions w/ unanimous or majority, not supported, using only first.</p>"
+                    break
+                if userquery and ( ( condtype == "unanimous" ) or ( condtype == "majority" ) ):
+                    warning += "<p><b>Warning:</b> Uanimous or majority conditions with user conditions, not supported, using only user.</p>"
+                if condtype == "unanimous":
+                    countquery = True
+                    if self.state[f'vetcond {n} gb'] == "good":
+                        querywhere = "WHERE goods>=%s AND bads=0"
+                    else:
+                        querywhere += "WHERE bads>=%s AND goods=0"
+                    queryargs.append( self.state[f'vetcond {n} numvets'] )
+                elif condtype == "majority":
+                    countquery = True
+                    if self.state[f'vetcond {n} gb'] == "good":
+                        querywhere = "WHERE goods-bads>=%s"
+                    else:
+                        querywhere = "WHERE bads-goods>=%s"
+                    querywhere += " AND bads+goods>=%s"
+                    queryargs.append( self.state[f'vetcond {n} mindiff'] )
+                    queryargs.append( self.state[f'vetcond {n} numvets'] )
+                else:
+                    userquery = True
+                    queryusers.append( self.state[f'vetcond {n} user'] )
+                    querygbs.append( self.state[f'vetcond {n} gb'] )                    
+            
+        cursor = self.db.cursor( cursor_factory = psycopg2.extras.RealDictCursor )
+
+        # Get relevant object ids
+
+        if countquery:
+            query = ( f"SELECT id FROM ( SELECT object_id AS id "
+                                             f",COUNT(goodbad) FILTER (WHERE goodbad='good') AS goods"
+                                             f",COUNT(goodbad) FILTER (WHERE goodbad='bad') AS bads "
+                                      f"FROM scanscore GROUP BY object_id ) AS x {querywhere}" )
+            # sys.stderr.write( f'Sending query: {cursor.mogrify( query, tuple( queryargs ) )}\n' )
+            cursor.execute( query, tuple( queryargs ) )
+            rows = cursor.fetchall()
+            ids = tuple( [ row['id'] for row in rows ] )
+        elif userquery:
+            query = ( f"SELECT object_id,username,goodbad FROM scanscore WHERE username IN %s" )
+            # sys.stderr.write( f'Sending user query {cursor.mogrify( query, ( tuple( queryusers ), ) )}\n' )
+            cursor.execute( query, ( tuple( queryusers ), ) )
+            rows = cursor.fetchall()
+            fulldf = pandas.DataFrame( rows ).set_index( ['object_id','username'] ).unstack()
+            sys.stderr.write( f'fulldf:\n{fulldf}\n' )
+            sys.stderr.write( f'indices: {fulldf.index.values}; columns: {fulldf.columns.values}\n' )
+            for user, gb in zip(queryusers, querygbs):
+                sys.stderr.write( f'Looking for username={user} and goodbad={gb}...\n' )
+                fulldf = fulldf[ fulldf[ 'goodbad' ][ user ] == gb ]
+                sys.stderr.write( f'fulldf:\n{fulldf}\n' )
+            ids = tuple( fulldf.index.values )
+        else:
+            query = "SELECT DISTINCT object_id FROM scanscore"
+            cursor.execute( query )
+            rows = cursor.fetchall()
+            ids = tuple( [ row['object_id'] for row in rows ] )
+
+        numobj = len(ids)
+            
+        if numobj == 0:
+            self.response += "<h2>No objects!</h2>\n"
+            self.htmlbottom
+            return self.response
+
         # Get the ranked things
+
+        orderclause = ""
+        if "vetted order" in self.state:
+            if self.state["vetted order"] == "standard":
+                orderclause = "ORDER BY e.mjd,subs.ccdnum,oid"
+            elif self.state["vetted order"] == "random":
+                orderclause = "ORDER BY RANDOM()"
+                warning += "<p><b>Note</b>: Random ordering, each \"Next\" or \"Prev\" really just gets another random set.</p>\n"
+            else:
+                ordercaluse = "ORDER BY e.mjd,subs.ccdnum,oid"
+                warning += f'<p><b>Warning</b>: Unknown ordering {self.state["vetted order"]}, ordering by mjd, ccdnum, object_id</p>\n'
         
-        query = ( "SELECT oid,users,goodbads,exposure_id,cid,rb,ra,dec,ccdnum,filename,scijpg,refjpg,diffjpg FROM "
-                  "  ( SELECT ss.object_id AS oid,subs.exposure_id,o.candidate_id AS cid,o.rb,o.ra,o.dec,"
+        query = ( "SELECT oid,users,goodbads,exposure_id,cid,ra,dec,ccdnum,filename,scijpg,refjpg,diffjpg FROM "
+                  "  ( SELECT ss.object_id AS oid,subs.exposure_id,o.candidate_id AS cid,o.ra,o.dec,"
                   "           subs.ccdnum,e.filename,"
                   "           array_agg(ss.username) as users,"
                   "           array_agg(ss.goodbad) as goodbads,"
@@ -1359,28 +1533,41 @@ class ShowRatedObjs(HandlerBase):
                   "    INNER JOIN subtractions subs ON o.subtraction_id=subs.id "
                   "    INNER JOIN exposures e ON subs.exposure_id=e.id "
                   "    LEFT JOIN cutouts cu ON cu.object_id=o.id "
-                  "    GROUP BY ss.object_id,e.id,e.filename,o.id,o.candidate_id,o.rb,o.ra,o.dec,"
+                  "    WHERE ss.object_id IN %(idlist)s "
+                  "    GROUP BY ss.object_id,e.id,e.filename,o.id,o.candidate_id,o.ra,o.dec,"
                   "             subs.exposure_id,subs.ccdnum,"
                   "             cu.sci_jpeg,cu.ref_jpeg,cu.diff_jpeg "
-                  "    ORDER BY e.mjd,subs.ccdnum,o.id ) x "
-                  "LIMIT %s OFFSET %s" )
-        # sys.stderr.write( "Query: {}\n".format( cursor.mogrify( query, ( self.state["numperpage"],
-        #                                                                  self.state["offset"] ) ) ) )
-        cursor.execute(query, ( self.state["numperpage"], self.state["offset"] ) )
-        rows = cursor.fetchall()
-        rows = [dict(row) for row in rows ]
+                 f"    {orderclause} ) x "
+                  "LIMIT %(numperpage)s OFFSET %(offset)s" )
+        cursor.execute(query, { 'idlist': ids,
+                                'numperpage': self.state["numperpage"],
+                                'offset': self.state["offset"] } )
+        objtable = pandas.DataFrame( cursor.fetchall() )
+        objtable = objtable.set_index( "oid" )
+        oids = objtable.index.unique(level=0).to_numpy()
+        
+        # Get the rbs
+
+        query = "SELECT object_id,rb FROM objectrbs WHERE object_id IN %s AND rbtype_id=%s"
+        cursor.execute( query, ( tuple(oids), rbtype ) )
+        rbtable = pandas.DataFrame( cursor.fetchall() )
+        rbtable = rbtable.set_index( 'object_id' )
+        objtable = objtable.merge( rbtable, left_index=True, right_index=True, how='left' )
         
         # Wrangle the vetting info into what HandlerBase.objecttable expects
 
-        for row in rows:
-            row["vetting"] = {}
+        vetdict = {}
+        for objid, row in objtable.iterrows():
+            vetdict[objid] = {}
             for username, score in zip( row["users"], row["goodbads"] ):
-                row["vetting"][username] = score
+                vetdict[objid][username] = score
 
         # Show
 
+        self.response += warning
+        
         self.prevnext( self.state, numobj, "showrated" )
-        self.objecttable( rows, showvetting=True )
+        self.show_objecttable( objtable, vetdict=vetdict )
         self.prevnext( self.state, numobj, "showrated" )
                 
         self.htmlbottom
@@ -1398,7 +1585,7 @@ class SetGoodBad(HandlerBase):
             return rval
 
         query = ( "SELECT user,password FROM scanusers WHERE username=%s" )
-        cursor = self.db.cursor( cursor_factory = psycopg2.extras.DictCursor )
+        cursor = self.db.cursor( cursor_factory = psycopg2.extras.RealDictCursor )
         cursor.execute( query, ( data["user"], ) )
         rows = cursor.fetchall()
         if len(rows) == 0:
@@ -1426,7 +1613,7 @@ class SetGoodBad(HandlerBase):
         cursor.close()
 
         # This is hopefully reudndant, but read the status back
-        cursor = self.db.cursor(  cursor_factory = psycopg2.extras.DictCursor )
+        cursor = self.db.cursor(  cursor_factory = psycopg2.extras.RealDictCursor )
         query = ( "SELECT object_id,username,goodbad FROM scanscore "
                   "WHERE username=%(user)s AND object_id IN %(objids)s" )
         cursor.execute( query, { 'user': data["user"], 'objids': tuple(data["obj"]) } )

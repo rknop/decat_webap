@@ -11,6 +11,7 @@ PYTHONPATHDIR = /html
 DBDATA = /dbinfo
 DBNAME = db
 DBNAME_DEV = db_dev
+# DBNAME_DEV = db
 
 # For this to work, the spin load needs to have keys in a secret mounted at /dbinfo
 #   db, db_dev, dbhost, dbpasswd, dbport, dbuser

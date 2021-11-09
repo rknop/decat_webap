@@ -14,6 +14,9 @@
     --tooltip-color: black;
     --good-color: #00c000;
     --bad-color: #c00000;
+    --stack-color: #800080;
+    --stack-bg: #ffeeff;
+    --indiv-bg: #eeffee;
     --warning-color: #c06040;
 }
 
@@ -70,6 +73,10 @@ td.vettinglist { border: 2px solid var(--half-faded-color);
 .bad { font-weight: bold; color: var(--bad-color); }
 .warning { font-weight: bold; color: var(--warning-color); }
 
+span.stack { color: var(--stack-color) }
+tr.stack { background-color: var(--stack-bg) }
+tr.notstack { background-color: var(--indiv-bg) }
+
 .link { background: none;
         border: none;
         padding: 0;
@@ -78,3 +85,5 @@ td.vettinglist { border: 2px solid var(--half-faded-color);
         cursor: pointer;
         font-size: 100%;
       }
+
+.emmarginabove { margin-top: 1em }
