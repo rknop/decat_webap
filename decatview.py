@@ -1,13 +1,12 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-# DON'T EDIT decatview.py, INSTEAD EDIT decatview.py.in
-
 # https://www.legacysurvey.org/viewer?ra=30.1530962&dec=-5.0236864&zoom=16&layer=dr8
 
 import sys
 import math
 import os
+import pathlib
 import re
 import time
 import random
@@ -29,11 +28,13 @@ from web import form
 import PIL
 import PIL.Image
 
-if not "@pythonpathdir@" in sys.path:
-    sys.path.insert(0, "@pythonpathdir@")
+scriptdir = str( pathlib.Path( __file__ ).parent )
+if scriptdir not in sys.path:
+    sys.path.insert(0, scriptdir )
 
 from webapconfig import webapfullurl, webapdir, webapdirurl, DBdata, DBname
 from util import dtohms, dtodms, radectolb, mjd, dateofmjd, parsedms, sanitizeHTML
+from decatdb import DB, ObjectTable, ExposureTable
 
 def adapt_numpy_int64( val ):
         return psycopg2.extensions.AsIs( val )
@@ -101,8 +102,8 @@ class HandlerBase(object):
                        "date1": "",
                        # "onlygallat": False,
                        # "gallatincexc": "exc",
-                       # "minb": -20,
-                       # "maxb": 20,
+                       "minb": 0,
+                       "maxb": 90,
                        "stackorindiv": "all",
                        "allpropornot": "inc",
                        "whichprops": [ '2021B-0149', '2021A-0275', '2020B-0053' ],
@@ -209,14 +210,10 @@ class HandlerBase(object):
 
     # ========================================
         
-    def show_objecttable( self, objtable, vetdict=None, goodbad=None, user=None, passwd=None ):
+    def show_objecttable( self, objtable, showvetting=False, goodbad=None, user=None, passwd=None ):
 
         setallunsetbadbutton = ""
         if goodbad is not None:
-            # notgoodbadset = []
-            # for row in rows:
-            #     if not row["oid"] in goodbad:
-            #         notgoodbadset.append( str(row["oid"]) )
             setallunsetbadbutton = "<p>"
             button = form.Button( name="makethingsbad", html="Make All Unset Bad", )
             # I'm using something undocumented in web.py here, which is very dangerous
@@ -224,9 +221,6 @@ class HandlerBase(object):
             button.attrs['data-user'] = user
             button.attrs['data-password'] = passwd
             setallunsetbadbutton += button.render()
-            # setallunsetbadbutton += form.Button( id="makethingsbad", html="Make All Unset Bad",
-            #                                      onclick="setallbad(\"{}\", \"{}\", [{}])"
-            #                                      .format( user, passwd, ",".join(notgoodbadset) ) ).render()
             setallunsetbadbutton += "</p>"
 
         self.response += setallunsetbadbutton
@@ -240,20 +234,20 @@ class HandlerBase(object):
         for dex, row in objtable.iterrows():
             candid = row["cid"]
             objid = dex # row["oid"]
-            rb = row["rb"]
+            rb = row["rb"] if ( "rb" in row ) else "n/a"
             ra = row["ra"]
             dec = row["dec"]
             ccdnum = row["ccdnum"]
-            filename = row["filename"]
-            if isinstance( row["scijpg"], str ):
+            filename = row["exposurename"]
+            if ( "scijpg" in row ) and isinstance( row["scijpg"], str ):
                 scib64 = row["scijpg"].replace("\n","")
             else:
                 scib64 = None
-            if isinstance( row["refjpg"], str ):
+            if ( "refjpg" in row ) and isinstance( row["refjpg"], str ):
                 refb64 = row["refjpg"].replace("\n","")
             else:
                 refb64 = None
-            if isinstance( row["diffjpg"], str ):
+            if ( "diffjpg" in row ) and isinstance( row["diffjpg"], str ):
                 diffb64 = row["diffjpg"].replace("\n","")
             else:
                 diffb64 = None
@@ -313,17 +307,16 @@ class HandlerBase(object):
                 else:
                     self.response += "<span id=\"{}status\"><i>(not set)</i></span>\n".format(objid)
 
-            elif vetdict:
+            elif showvetting:
                 self.response += "<td class=\"vettinglist\">"
                 first = True
-                if objid in vetdict:
-                    for username, score in vetdict[objid].items():
-                        if first:
-                            first = False
-                        else:
-                            self.response += "<br>"
-                        self.response += "{username}: <span class=\"{score}\">{score}</span>".format( username=username,
-                                                                                                  score=score )
+                for username, score in zip( row["users"], row["goodbads"] ):
+                    if first:
+                        first = False
+                    else:
+                        self.response += "<br>"
+                    self.response += "{username}: <span class=\"{score}\">{score}</span>".format( username=username,
+                                                                                              score=score )
                 self.response += "</td>"
                     
             self.response += "</tr>\n"
@@ -381,15 +374,11 @@ class FrontPage(HandlerBase):
         self.response += form.Input( name="date0", value=self.state["date0"], type="text" ).render()
         self.response += "\n&nbsp;&nbsp;to&nbsp;&nbsp;\n"
         self.response += form.Input( name="date1", value=self.state["date1"], type="text" ).render() + "</p>\n"
-        # self.response += "<p>" + form.Checkbox( name="onlygallat", value=self.state["onlygallat"] ).render()
-        # self.response += form.Dropdown( name="gallatincexc", args=[ ("inc","Only Include"),
-        #                                                             ("exc", "Exclude") ],
-        #                                 value=self.state["gallatincexc"] ).render()
-        # self.response += "&nbsp;galactic latitude between&nbsp;"
-        # self.response += form.Input( name="minb", type="text", size="4", value=self.state["minb"] ).render()
-        # self.response += "°&nbsp;and&nbsp;"
-        # self.response += form.Input( name="maxb", type="text", size="4", value=self.state["maxb"] ).render()
-        # self.response += "°</p>\n<p>"
+        self.response += "<p>Galactic latitude between ± "
+        self.response += form.Input( name="minb", type="text", size="4", value=self.state["minb"] ).render()
+        self.response += "°&nbsp;and&nbsp;"
+        self.response += form.Input( name="maxb", type="text", size="4", value=self.state["maxb"] ).render()
+        self.response += "°</p>\n<p>"
         self.response += "<br>" + form.Dropdown( name="stackorindiv", id="stackorindiv",
                                                  args=[ ("all", "Show both stacks and individual images"),
                                                         ("indiv", "Show only individual images, not stacks"),
@@ -751,6 +740,7 @@ class ListExposures(HandlerBase):
         web.header('Content-Type', 'text/html; charset="UTF-8"')
         self.htmltop()
         self.set_state()
+        rbtype = 1
         
         if len(self.state["date0"].strip()) == 0:
             self.state["date0"] = "1970-01-01"
@@ -758,12 +748,9 @@ class ListExposures(HandlerBase):
             self.state["date1"] = "2999-12-31"
         date0 = self.state["date0"].strip()
         date1 = self.state["date1"].strip()
-        includeallprops = self.state["allpropornot"] == "inc"
         whichprops = self.state["whichprops"]
-        # limitbygallat = self.state["onlygallat"]
-        # excludelatrange = self.state["gallatincexc"] == "exc"
-        # minb = float( self.state["minb"] )
-        # maxb = float( self.state["maxb"] )
+        minb = math.fabs( float( self.state["minb"] ) )
+        maxb = math.fabs( float( self.state["maxb"] ) )
             
         try:    
             t0 = dateutil.parser.parse( date0 )
@@ -779,20 +766,11 @@ class ListExposures(HandlerBase):
             self.htmlbottom()
             return self.response
 
-        mjd0 = mjd( t0.year, t0.month, t0.day, t0.hour, t0.minute, t0.second )
-        mjd1 = mjd( t1.year, t1.month, t1.day, t1.hour, t1.minute, t1.second )
-
-        # self.response += "<p>{} is {},{},{},{},{} and mjd {}</p>\n".format( date0, t0.year, t0.month, t0.day,
-        #                                                                     t0.hour, t0.minute, mjd0 )
-        # self.response += "<p>{} is {},{},{},{},{} and mjd {}</p>\n".format( date1, t1.year, t1.month, t1.day,
-        #                                                                     t1.hour, t1.minute, mjd1 )
-
         self.back_to_home()
         
         self.response += "<h4>Exposures from {} to {}\n".format( t0.isoformat(), t1.isoformat() )
-        # if limitbygallat:
-        #     self.response += "excluding " if excludelatrange else "with "
-        #     self.response += "{:.2f} ≤ b ≤ {:.2f}".format( minb, maxb )
+        if minb > 0 or maxb < 90:
+            self.response += f" with {minb:.2f}° ≥ |b| ≥ {maxb:.2f}° "
         self.response += "</h4>\n"
 
         if self.state['allpropornot'] == "some":
@@ -800,108 +778,29 @@ class ListExposures(HandlerBase):
                                f"{'' if len(self.state['whichprops'])==1 else 's'} "
                                f" {','.join(self.state['whichprops'])}</p>\n" )
             
-        exposures = {}
-        exporder = []
-        
-        # sys.stderr.write("ListExposures about to send DB query\n")
-        cursor = self.db.cursor( cursor_factory = psycopg2.extras.RealDictCursor )
-        query = ( "SELECT e.filename,e.filter,e.proposalid,COUNT(s.id) AS nsubs FROM exposures e "
-                  "LEFT JOIN subtractions s ON s.exposure_id=e.id "
-                  "WHERE e.mjd>=%(mjd0)s AND e.mjd<=%(mjd1)s " )
-        if self.state["allpropornot"] == "some":
-            query += "AND proposalid IN %(propids)s "
-        if self.state["stackorindiv"] == "indiv":
-            query += "AND NOT e.is_stack "
-        elif self.state["stackorindiv"] == "stack":
-            query += "AND e.is_stack "
-        # if limitbygallat:
-        #     if excludelatrange:
-        #         query += "AND ( e.gallat<%s OR e.gallat>%s ) "
-        #     else:
-        #         query += "AND e.gallat>%s AND e.gallat<%s "
-                
-        query += "GROUP BY e.filename,e.filter,e.mjd,e.gallat,e.proposalid ORDER BY e.mjd"
-        # if limitbygallat:
-        #     cursor.execute(query, (mjd0, mjd1, minb, maxb) )
-        # else:
-        cursor.execute(query, {'mjd0': mjd0,
-                               'mjd1': mjd1,
-                               'propids': tuple(self.state['whichprops']) } )
-        rows = cursor.fetchall()
-        for row in rows:
-            exporder.append( row['filename'] )
-            exposures[ row['filename'] ] = { "filter": row['filter'],
-                                             "proposalid": row['proposalid'],
-                                             "nsubs": row['nsubs'] }
 
-        if len(exporder) == 0:
+        if self.state["allpropornot"] == "some":
+            propids = self.state['whichprops']
+        else:
+            propids = None
+        if self.state["stackorindiv"] == "indiv":
+            includestack=False
+        else:
+            includestack = True
+        if self.state["stackorindiv"] == "stack":
+            onlystack=True
+        else:
+            onlystack=False
+            
+        exptab = ExposureTable.load( t0, t1, propids=propids, includestack=includestack, onlystack=onlystack,
+                                     rbtype=rbtype, mingallat=minb, maxgallat=maxb )
+        if len(exptab) == 0:
             self.response += "<p>No exposures!</p>\n"
             self.htmlbottom()
-            cursor.close()
             return self.response
-            
-        query = ( "SELECT filename,ra,dec,header->'EXPTIME' AS exptime FROM exposures WHERE filename IN %s" )
-        # sys.stderr.write( "{}\n".format( cursor.mogrify( query, ( tuple(exporder), ) ) ) )
-        cursor.execute( query, ( tuple(exporder), ) )
-        rows = cursor.fetchall()
-        for row in rows:
-            if not row['filename'] in exposures:
-                sys.stderr.write("WARNING: exposure {} found in object query, not ra/dec query!"
-                                 .format( row['filename'] ))
-            exposures[ row['filename'] ]["ra"] = float( row['ra'] )
-            exposures[ row['filename'] ]["dec"] = float( row['dec'] )
-            exposures[ row['filename'] ]["exptime"] = float( row['exptime'] )
-            exposures[ row['filename'] ]["nhighrb"] = "broken"
-            
-        query = ( "SELECT e.filename,COUNT(o.id) AS nobjs FROM OBJECTS o "
-                  "INNER JOIN subtractions s ON o.subtraction_id=s.id "
-                  "RIGHT JOIN exposures e ON s.exposure_id=e.id "
-                  "WHERE e.filename IN %s "
-                  "GROUP BY e.filename,e.filter,e.mjd "
-                  "ORDER BY e.mjd " )
-        cursor.execute( query, ( tuple(exporder), ) )
-        rows = cursor.fetchall()
-        for row in rows:
-            if not row['filename'] in exposures:
-                sys.stderr.write("WARNING: exposure {} found in object query, not subtraction query!"
-                                 .format( row[0] ))
-                exposures[ row['filename'] ] = { "nsubs": "??" }
-                exporder.append( row['filename'] )    # will be out of order!!!!!
-            exposures[ row['filename'] ]["nobjs"] = row["nobjs"]
-
-        # query = ( "SELECT e.filename,COUNT(o.id) AS nhighrb FROM OBJECTS o "
-        #           "INNER JOIN subtractions s ON o.subtraction_id=s.id "
-        #           "RIGHT JOIN exposures e ON s.exposure_id=e.id "
-        #           "WHERE o.rb>=0.6 AND e.filename IN %s"
-        #           "GROUP BY e.filename,e.filter,e.mjd "
-        #           "ORDER BY e.mjd " )
-        # cursor.execute( query, ( tuple(exporder), ) )
-        # rows = cursor.fetchall()
-        # for row in rows:
-        #     exposures[ row['filename'] ]["nhighrb"] = row['nhighrb']
-
-        # Count the number that have made it through event id type "objectslogged" (27)
-        query = ( "SELECT e.filename,COUNT(p.id) AS nfinished FROM exposures e "
-                  "INNER JOIN processcheckpoints p ON e.id=p.exposure_id "
-                  "WHERE e.filename IN %s AND p.event_id=27 "
-                  "GROUP BY e.filename" )
-        cursor.execute( query, ( tuple(exporder), ) )
-        rows = cursor.fetchall()
-        for row in rows:
-            exposures[ row['filename'] ]["nfinished"] = row['nfinished']
-
-        # Count the number that have errors (999)
-        query = ( "SELECT e.filename,COUNT(p.id) AS nerrors FROM exposures e "
-                  "INNER JOIN processcheckpoints p ON e.id=p.exposure_id "
-                  "WHERE e.filename IN %s AND p.event_id=999 "
-                  "GROUP BY e.filename" )
-        cursor.execute( query, ( tuple(exporder), ) )
-        rows = cursor.fetchall()
-        for row in rows:
-            exposures[ row['filename'] ]["nerrors"] = row['nerrors']
-            
-        cursor.close()
-            
+        exptab.load_nchips_checkpoint( checkpoint=27, column="nfinished" )
+        exptab.load_nerrors()
+        
         self.response += "<p>Number of objects per page: <input type=\"number\" name=\"numperpage\" value=100><br>\n"
         self.response += "Only include ccd numbers (comma-sep): "
         self.response += form.Input( name="ccds", type="text", value=self.state["ccds"] ).render()
@@ -914,41 +813,36 @@ class ListExposures(HandlerBase):
         self.response += " show manual vetting?</p>\n<p>"
         # self.hidden_state( omit=["ccds", "orderby", "showrb", "showvetting" ] )
 
-        self.response += f"{len(exporder)} exposures<br>\n"
+        self.response += f"{len(exptab)} exposures<br>\n"
         self.response += "<table class=\"exposurelist\">\n"
         self.response += ( "<tr><th>Exposure</th><th>Filter</th><th>propid</th><th>t_exp</th>"
                            "<th>ra</th><th>dec</th><th>l</th><th>b</th>"
                            "<th>#Subs</th><th>#Done</th><th>N. Objects</th>"
                            "<th>rb>=0.6</th></tr>\n" )
-        for exp in exporder:
-            ra = exposures[exp]["ra"]
-            dec = exposures[exp]["dec"]
+
+        for eid, exposure in exptab.df.iterrows():
+            ra = exposure["ra"]
+            dec = exposure["dec"]
             l,b = radectolb( ra, dec )
-            fnameclass = "stack" if "stack" in exp else "notstack"
-            self.response += '<tr class=\"{fnameclass}\"><td>{exp}</td>\n'.format(exp=exp, fnameclass=fnameclass);
-            self.response += f"  <td>{exposures[exp]['filter']}</td>\n"
-            self.response += f"  <td>{exposures[exp]['proposalid']}</td>\n"
-            self.response += f"  <td>{exposures[exp]['exptime']}</td>\n".format( )
+            fnameclass = "stack" if "stack" in exposure['filename'] else "notstack"
+            self.response += f'<tr class=\"{fnameclass}\"><td>{exposure["filename"]}</td>\n'
+            self.response += f"  <td>{exposure['filter']}</td>\n"
+            self.response += f"  <td>{exposure['proposalid']}</td>\n"
+            self.response += f"  <td>{exposure['exptime']}</td>\n"
             self.response += f'  <td>{dtohms(ra)}</td>\n'
             self.response += f'  <td>{dtodms(dec)}</td>\n'
             self.response += f'  <td>{l:.02f}</td>\n'
             self.response += f'  <td>{b:.02f}</td>\n'
-            self.response += f"  <td>{exposures[exp]['nsubs']}</td>\n"
-            if "nfinished" in exposures[exp]:
-                self.response += f"  <td>{exposures[exp]['nfinished']}</td>\n"
-            else:
-                self.response += "  <td>—</td>\n"
-            self.response += f"  <td>{exposures[exp]['nobjs']}</td>\n"
-            if "nhighrb" in exposures[exp]:
-                self.response += f"  <td>{exposures[exp]['nhighrb']}</td>\n"
-            else:
-                self.response += "  <td>—</td>\n"
+            self.response += f"  <td>{exposure['nsubs']}</td>\n"
+            self.response += f"  <td>{exposure['nfinished']}</td>\n"
+            self.response += f"  <td>{exposure['nobjs']}</td>\n"
+            self.response += f"  <td>{exposure['nbigrbs']}</td>\n"
             self.response += ( f"  <td><button type=\"submit\" name=\"showobjects\" value=\"Show Objects\" "
-                               f"data-exposure=\"{exp}\">Show Objects</button></td>\n" )
+                               f"data-exposure=\"{exposure['filename']}\">Show Objects</button></td>\n" )
             self.response += ( f"  <td><button type=\"submit\" name=\"showlog\" value=\"Show Log\" "
-                               f"data-exposure=\"{exp}\">Show Log</button></td>\n" )
-            if ( "nerrors" in exposures[exp] ) and ( exposures[exp]["nerrors"] > 0 ):
-                self.response += f"  <td class=\"bad\">{exposures[exp]['nerrors']} errors</td>\n"
+                               f"data-exposure=\"{exposure['filename']}\">Show Log</button></td>\n" )
+            if exposure["nerrors"] > 0 :
+                self.response += f"  <td class=\"bad\">{exposure['nerrors']} errors</td>\n"
             self.response += "</tr>\n"
             
         self.response += "</table>\n"
@@ -989,72 +883,30 @@ class ShowExposure(HandlerBase):
         showvetting = self.state["showvetting"]
         rbtype = 1
 
-        cursor = self.db.cursor( cursor_factory = psycopg2.extras.RealDictCursor )
-
-        # First : get all objects on the requested CCDs of the exposure
-        
-        ccdarr = self.state["ccds"].split(",")
-        if len(ccdarr) == 0: ccds = None
-        else:
-            ccdnums = []
-            for i in ccdarr:
-                try:
-                    val = int(i)
-                except ValueError:
-                    continue
-                else:
-                    ccdnums.append( val )
-            if len(ccdnums) == 0:
-                ccds = None
+        try:
+            ccds = self.state["ccds"].strip()
+            if len(ccds) > 0:
+                ccdarr = [ int(x) for x in self.state["ccds"].split(",") ]
+                if len(ccdarr) == 0: ccdarr = None
             else:
-                ccds = "("
-                first = True
-                for num in ccdnums:
-                    if first: first=False
-                    else: ccds += ","
-                    ccds += '{:d}'.format(num)
-                ccds += ")"
-
-        query = ( "SELECT o.id AS oid,o.ra,o.dec,s.ccdnum,e.filename "
-                  "FROM objects o "
-                  "INNER JOIN subtractions s ON o.subtraction_id=s.id "
-                  "INNER JOIN exposures e ON s.exposure_id=e.id "
-                  "WHERE e.filename=%s " )
-        if ccds is not None:
-            query += " AND s.ccdnum IN {} ".format(ccds)
-        # sys.stderr.write( "Sending query \"{}\"\n".format( cursor.mogrify( query, [ filename ] ) ) )
-        cursor.execute( query, ( filename, ) )
-        objtable = pandas.DataFrame( cursor.fetchall() )
-        objtable = objtable.set_index( 'oid' )
-        oids = objtable.index.unique(level=0).to_numpy()
-        numobjs = len( objtable )
-
-        # Next: get the rb values of these objects, as we might want to sort by them
-
-        query = "SELECT object_id,rb FROM objectrbs WHERE object_id IN %s AND rbtype_id=%s"        
-        cursor.execute( query, ( tuple(oids), rbtype ) )
-        rbtable = pandas.DataFrame( cursor.fetchall() )
-        rbtable = rbtable.set_index( "object_id" )
-        objtable = objtable.merge( rbtable, left_index=True, right_index=True, how='left' )
-
-        # Sort as desired
-
-        if orderby == "real/bogus":
-            objtable = objtable.sort_values( 'rb', ascending=False )
-        elif orderby == "objnum":
-            objtable = objtable.sort_index()
+                ccdarr = None
+        except Exception as e:
+            self.response += f"<p><b>ERROR</b> parsing ccdlist {sanitizeHTML(ccds)}</p>\n"
+            return
             
-        # Subset
+        objtab = ObjectTable.load_for_exposure( exposure_name=filename, ccdnums=ccdarr )
+        objtab.loadrb( rbtype=rbtype )
+        objtab.loadjpg()
+        if showvetting:
+            objtab.loadvetting()
+        
+        if orderby == "real/bogus":
+            objtab.sortrb()
+        elif orderby == "objnum":
+            objtab.sortoid()
 
-        if offset < 0:
-            offset = 0
-        if offset >= numobjs:
-            offset = numobjs - 1
-        lastoff = offset + numperpage
-        if lastoff > numobjs:
-            lastoff = numobjs
-        objtable = objtable.iloc[offset:lastoff]
-        oids = objtable.index.unique(level=0).to_numpy()
+        numobjs = len(objtab)
+        objtab.subset( offset, offset+numperpage )
         
         self.prevnext( self.state, numobjs )
 
@@ -1063,38 +915,7 @@ class ShowExposure(HandlerBase):
 
         self.response += "<p><b>ROB</b>: Print information about r/b</p>"
         
-        # Get the cutouts to show
-        
-        query = ( "SELECT c.id as cid,o.id as oid, "
-                  "ENCODE(cu.sci_jpeg, 'base64') as scijpg, "
-                  "ENCODE(cu.ref_jpeg, 'base64') as refjpg, "
-                  "ENCODE(cu.diff_jpeg, 'base64') as diffjpg "
-                  "FROM objects o "
-                  "INNER JOIN candidates c ON o.candidate_id=c.id "
-                  "INNER JOIN subtractions s ON o.subtraction_id=s.id "
-                  "INNER JOIN exposures e ON s.exposure_id=e.id "
-                  "LEFT JOIN cutouts cu ON cu.object_id=o.id "
-                  "WHERE o.id IN %s " );
-        # sys.stderr.write("Sending query \"{}\"\n".format(query))
-        cursor.execute( query, ( tuple(oids), ) )
-        newtable = pandas.DataFrame( cursor.fetchall() )
-        newtable = newtable.set_index( "oid" )
-        objtable = objtable.merge( newtable, left_index=True, right_index=True, how='left' )
-
-        vetdict = None
-        if showvetting:
-            query = "SELECT object_id,username,goodbad FROM scanscore WHERE object_id IN %s"
-            cursor.execute( query, ( tuple(oids), ) )
-            rows = cursor.fetchall()
-            vetdict = {}
-            for row in rows:
-                if not row["object_id"] in vetdict:
-                    vetdict[row["object_id"]] = {}
-                vetdict[row["object_id"]][row["username"]] = row["goodbad"]
-                
-        cursor.close()
-            
-        self.show_objecttable( objtable, vetdict=vetdict )
+        self.show_objecttable( objtab.df, showvetting=showvetting )
         
         self.prevnext( self.state, numobjs )
 
