@@ -92,7 +92,8 @@ decatview.init = function()
         }
     }
     let addvetcondition = document.getElementById( "Add Vet Condition" );
-    addvetcondition.addEventListener( "click", function() { decatview.addVetCondition(); } );
+    if ( addvetcondition != null )
+        addvetcondition.addEventListener( "click", function() { decatview.addVetCondition(); } );
 }
 
 // **********************************************************************
@@ -121,10 +122,10 @@ decatview.get_show_exp_data = function( exposure )
     let data = {};
     data.ccds = document.getElementById("ccds").value;
     data.showvetting = document.getElementById("showvetting").value;
-    data.showrb = document.getElementById("showrb0").value; // Extra 0 from how I do ids with web.form.Input
-    data.offset = document.getElementById("offset0").value; //  "    "  "    "  " "   "   "    "   
-    data.date0 = document.getElementById("date00").value;   //  "    "  "    "  " "   "   "    "   
-    data.date1 = document.getElementById("date10").value;   //  "    "  "    "  " "   "   "    "   
+    // data.showrb = document.getElementById("showrb0").value; // Extra 0 from how I do ids with web.form.Input
+    // data.offset = document.getElementById("offset0").value; //  "    "  "    "  " "   "   "    "   
+    // data.date0 = document.getElementById("date00").value;   //  "    "  "    "  " "   "   "    "   
+    // data.date1 = document.getElementById("date10").value;   //  "    "  "    "  " "   "   "    "   
     let orderbys = document.getElementsByName("orderby");
     for ( let elem in orderbys )
         if ( ( elem.type == "radio" ) && ( elem.checked ) )
@@ -277,15 +278,27 @@ decatview.addVetCondition = function()
     div.appendChild( conduser );
 
     let condgb = document.createElement( "select" );
+    condgb.style.display = "none";
     condgb.id = "vetcond " + maxcond + " gb";
     condgb.setAttribute( "name", condgb.id );
-    for ( let val of [ "good", "bad" ] ) {
+    for ( let val of [ "good", "bad", "either" ] ) {
         let opt = document.createElement( "option" );
         opt.value = val;
         opt.text = val;
         condgb.add( opt );
     }
     div.appendChild( condgb );
+
+    let condusergb = document.createElement( "select" );
+    condusergb.id = "vetcond " + maxcond + " usergb";
+    condusergb.setAttribute( "name", condusergb.id );
+    for ( let val of [ "good", "bad", "either", "not good", "not bad", "not either" ] ) {
+        let opt = document.createElement( "option" );
+        opt.value = val;
+        opt.text = val;
+        condusergb.add( opt );
+    }
+    div.appendChild( condusergb );
 
     let condnumvetspan = document.createElement( "span" );
     condnumvetspan.style.display = "none";
@@ -323,16 +336,22 @@ decatview.addVetCondition = function()
     condtype.addEventListener( 'change', function() {
         if ( condtype.value == "user" ) {
             conduser.style.display = "inline";
+            condusergb.style.display = "inline";
+            condgb.style.display = "none";
             condnumvetspan.style.display = "none";
             condmindiffspan.style.display = "none";
         }
         else if ( condtype.value == "unanimous" ) {
             conduser.style.display = "none";
+            condusergb.style.display = "none";
+            condgb.style.display = "inline";
             condnumvetspan.style.display = "inline";
             condmindiffspan.style.display = "none";
         }
         else if ( condtype.value == "majority" ) {
             conduser.style.display = "none";
+            condusergb.style.display = "none";
+            condgb.style.display = "inline";
             condnumvetspan.style.display = "inline";
             condmindiffspan.style.display = "inline";
         }
