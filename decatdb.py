@@ -238,7 +238,7 @@ class ObjectTable(HasDF):
             cursor.execute( query, subvars )
             df = cursor_to_df(cursor, "oid")
             objtab = cls( df )
-        
+
             if rbtype is not None:
                 objtab.loadrb( rbtype=rbtype, curdb=db )
             if loadjpg:
@@ -501,7 +501,7 @@ class ObjectTable(HasDF):
             cursor = db.db.cursor()
             query = ( f"SELECT object_id as oid,rb FROM objectrbs "
                       f"WHERE object_id IN %(oids)s AND rbtype_id=%(rbtype)s" )
-            # logger.debug( cursor.mogrify( query, { 'oids': tuple(oids), 'rbtype': rbtype } ) )
+            # sys.stderr.write( str(cursor.mogrify( query, { 'oids': tuple(oids), 'rbtype': rbtype } )) + "\n" )
             cursor.execute( query, { 'oids': tuple(oids), 'rbtype': rbtype } )
             rbframe = cursor_to_df( cursor, "oid" )
             cursor.close()
@@ -755,6 +755,22 @@ class ExposureTable(HasDF):
             self._df.fillna( { 'nerrors': 0 }, downcast='infer', inplace=True )
     
             
+# ======================================================================
+
+class RBTypeTable(HasDF):
+    def __init__( self, *args, **kwargs ):
+        super().__init__( *args, **kwargs )
+
+    @classmethod
+    def get( cls, curdb=None, logger=None ):
+        logger = cls.getlogger( logger )
+
+        with DB.get(curdb) as db:
+            cursor = db.db.cursor()
+            cursor.execute( "SELECT * FROM rbtypes" )
+            df = cursor_to_df( cursor, "id" )
+        return cls( df )
+
 # ======================================================================
 
 class Exposure():

@@ -23,7 +23,7 @@ if scriptdir not in sys.path:
 
 from webapconfig import webapfullurl, webapdir, webapdirurl, DBdata, DBname
 from util import dtohms, dtodms, radectolb, mjd, dateofmjd, parsedms, sanitizeHTML
-from decatdb import DB, ObjectTable, ExposureTable, Exposure, Candidate
+from decatdb import DB, ObjectTable, ExposureTable, RBTypeTable, Exposure, Candidate
 from decatdb import check_scan_user, set_user_object_scanscore
 
 session = None
@@ -50,6 +50,7 @@ def secure_session():
             "showrb": False,
             "whattodo": "Show Objects",        # ROB THINK ABOUT THIS
             "mindet": 5,
+            "rbtype": 1,
             "rbcut": 0.6,
             "minrb": 5,
             "numdays": 3,
@@ -344,15 +345,25 @@ class FrontPage(HandlerBase):
         self.response += form.Input( name="date0", value=session.state["date0"], type="text" ).render()
         self.response += "\n&nbsp;&nbsp;to&nbsp;&nbsp;\n"
         self.response += form.Input( name="date1", value=session.state["date1"], type="text" ).render() + "</p>\n"
+
         self.response += "<p>Galactic latitude between ± "
         self.response += form.Input( name="minb", type="text", size="4", value=session.state["minb"] ).render()
         self.response += "°&nbsp;and&nbsp;"
         self.response += form.Input( name="maxb", type="text", size="4", value=session.state["maxb"] ).render()
-        self.response += "°</p>\n<p>"
-        self.response += "<br>" + form.Dropdown( name="stackorindiv", id="stackorindiv",
-                                                 args=[ ("all", "Show both stacks and individual images"),
-                                                        ("indiv", "Show only individual images, not stacks"),
-                                                        ("stack", "Show only stacks, not individual images") ],
+        self.response += "°</p>\n"
+
+        self.response += "<p><br>Use real/bogus type: "
+        rbtypes = RBTypeTable.get()
+        args = []
+        for dex, row in rbtypes.df.iterrows():
+            args.append( ( dex, f'{dex} — {row.description}' ) )
+        self.response += form.Dropdown( name="rbtype", id="rbtype", args=args,
+                                        value=session.state["rbtype"] ).render()
+        
+        self.response += "<br><br>" + form.Dropdown( name="stackorindiv", id="stackorindiv",
+                                                     args=[ ("all", "Show both stacks and individual images"),
+                                                            ("indiv", "Show only individual images, not stacks"),
+                                                            ("stack", "Show only stacks, not individual images") ],
                                                  value=session.state["stackorindiv"] ).render()
         self.response += "<br><br>" + form.Dropdown( name="allpropornot", id="allpropornot",
                                                 args=[ ("inc","Include all proposal IDs"),
@@ -712,7 +723,6 @@ class ListExposures(HandlerBase):
         web.header('Content-Type', 'text/html; charset="UTF-8"')
         self.htmltop()
         self.set_state()
-        rbtype = 1
         
         if len(session.state["date0"].strip()) == 0:
             session.state["date0"] = "1970-01-01"
@@ -765,7 +775,7 @@ class ListExposures(HandlerBase):
             onlystack=False
             
         exptab = ExposureTable.load( t0, t1, propids=propids, includestack=includestack, onlystack=onlystack,
-                                     rbtype=rbtype, mingallat=minb, maxgallat=maxb )
+                                     rbtype=session.state["rbtype"], mingallat=minb, maxgallat=maxb )
         if len(exptab) == 0:
             self.response += "<p>No exposures!</p>\n"
             self.htmlbottom()
@@ -776,6 +786,15 @@ class ListExposures(HandlerBase):
         self.response += "<p>Number of objects per page: <input type=\"number\" name=\"numperpage\" value=100><br>\n"
         self.response += "Only include ccd numbers (comma-sep): "
         self.response += form.Input( name="ccds", type="text", value=session.state["ccds"] ).render()
+
+        self.response += "\n<br>\n  Use real/bogus type: "
+        rbtypes = RBTypeTable.get()
+        args = []
+        for dex, row in rbtypes.df.iterrows():
+            args.append( ( dex, f'{dex} — {row.description}' ) )
+        self.response += form.Dropdown( name="rbtype", id="rbtype", args=args,
+                                        value=session.state["rbtype"] ).render()
+
         self.response += "\n<br>\n  Order by:\n"
         self.response += form.Radio( name="orderby", value=session.state["orderby"],
                                      args=[ ("real/bogus", "Real/Bogus"), ("objnum", "ObjectNum.") ] ).render()
@@ -854,7 +873,6 @@ class ShowExposure(HandlerBase):
         filename = session.state["exposure"]
         orderby = session.state["orderby"]
         showvetting = session.state["showvetting"]
-        rbtype = 1
 
         try:
             ccds = session.state["ccds"].strip()
@@ -867,9 +885,8 @@ class ShowExposure(HandlerBase):
             self.response += f"<p><b>ERROR</b> parsing ccdlist {sanitizeHTML(ccds)}</p>\n"
             return
             
-        objtab = ObjectTable.load_for_exposure( exposure_name=filename, ccdnums=ccdarr )
-        objtab.loadrb( rbtype=rbtype )
-        objtab.loadjpg()
+        objtab = ObjectTable.load_for_exposure( exposure_name=filename, ccdnums=ccdarr,
+                                                rbtype=session.state["rbtype"], loadjpg=True )
         if showvetting:
             objtab.loadvetting()
         
@@ -886,7 +903,13 @@ class ShowExposure(HandlerBase):
         self.response += "<h3>Exposure: {}</h3>\n".format( filename )
         self.response += "<h4>Candidates starting at offset {} out of {}</h4>\n".format( offset, numobjs )
 
-        self.response += "<p><b>ROB</b>: Print information about r/b</p>"
+        rbtypes = RBTypeTable.get()
+        if int(session.state["rbtype"]) not in rbtypes.df.index.values:
+            self.response += f"<p><b>Unknown r/b type {session.state['rbtype']}</b></p>\n"
+        else:
+            rbtype = rbtypes.df.loc[int(session.state['rbtype'])]
+            self.response += f"<p>R/B is type {session.state['rbtype']} — {rbtype['description']} "
+            self.response += f"(alert cutoff: {rbtype['rbcut']})</p>\n"
         
         self.show_objecttable( objtab.df, showvetting=showvetting )
         
@@ -986,7 +1009,6 @@ class ShowCandidate(HandlerBase):
         web.header('Content-Type', 'text/html; charset="UTF-8"')
         self.htmltop()
         self.set_state()
-        rbtype = 1
         
         self.back_to_home()
 
@@ -997,7 +1019,7 @@ class ShowCandidate(HandlerBase):
         candidate = Candidate.load( session.state["candidate"] )
         self.response += f"<h4>RA: {candidate.ra}&nbsp;&nbsp;&nbsp;&nbsp;dec: {candidate.dec}</h4>\n"
 
-        objecttable = ObjectTable.load_for_candidate( candidate.id, rbtype=rbtype, loadjpg=True )
+        objecttable = ObjectTable.load_for_candidate( candidate.id, rbtype=session.state["rbtype"], loadjpg=True )
 
         self.response += ( f"<p><a href=\"https://www.legacysurvey.org/viewer"
                            f"?ra={candidate.ra:.5f}&dec={candidate.dec:.5f}"
@@ -1047,7 +1069,6 @@ class RateCands(HandlerBase):
         web.header('Content-Type', 'text/html; charset="UTF-8"')
         self.htmltop()
         self.set_state()
-        rbtype = 1
         self.back_to_home()
 
         rval = check_scan_user( self.webinput )
@@ -1096,7 +1117,6 @@ class ShowRatedObjs(HandlerBase):
         web.header('Content-Type', 'text/html; charset="UTF-8"')
         self.htmltop()
         self.set_state()
-        rbtype = 1
         
         # Parsing the conditions is a bit of a mess.  I'm not really
         # happy with how I maintain state.  Right now, I stuff a million
@@ -1128,7 +1148,7 @@ class ShowRatedObjs(HandlerBase):
                 conditions.append( cond )
 
         orderrandom = session.state["vetted order"] == "random"
-        objtab = ObjectTable.load_by_rated( conditions=conditions, rbtype=rbtype,
+        objtab = ObjectTable.load_by_rated( conditions=conditions, rbtype=session.state["rbtype"],
                                             loadjpg=True, random=orderrandom )
         numobj = len(objtab)
             
@@ -1160,6 +1180,18 @@ class SetGoodBad(HandlerBase):
 
 # ======================================================================
     
+class ReInit(HandlerBase):
+    def do_the_things( self ):
+        web.header('Content-Type', 'text/html; charset="UTF-8"')
+        self.htmltop()
+        init_session_state()
+        self.back_to_home()
+        self.response += "<p>Session cleared.</p>"
+        self.htmlbottom()
+        return self.response
+    
+# ======================================================================
+    
 class DumpData(HandlerBase):
     def do_the_things( self ):
         web.header('Content-Type', 'text/html; charset="UTF-8"')
@@ -1185,6 +1217,7 @@ urls = (
     "/setgoodbad", "SetGoodBad" ,
     "/showrated", "ShowRatedObjs",
     "/dumpdata", "DumpData" ,
+    "/reinit", "ReInit" ,
     )
 
 web.config.session_parameters["samesite"] = "lax"
