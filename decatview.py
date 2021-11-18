@@ -808,7 +808,7 @@ class ListExposures(HandlerBase):
         self.response += ( "<tr><th>Exposure</th><th>Filter</th><th>propid</th><th>t_exp</th>"
                            "<th>ra</th><th>dec</th><th>l</th><th>b</th>"
                            "<th>#Subs</th><th>#Done</th><th>N. Objects</th>"
-                           "<th>rb>=0.6</th></tr>\n" )
+                           "<th>rb≥cut</th></tr>\n" )
 
         for eid, exposure in exptab.df.iterrows():
             ra = exposure["ra"]

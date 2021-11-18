@@ -122,6 +122,7 @@ decatview.get_show_exp_data = function( exposure )
     let data = {};
     data.ccds = document.getElementById("ccds").value;
     data.showvetting = document.getElementById("showvetting").value;
+    data.rbtype = document.getElementById("rbtype").value;
     // data.showrb = document.getElementById("showrb0").value; // Extra 0 from how I do ids with web.form.Input
     // data.offset = document.getElementById("offset0").value; //  "    "  "    "  " "   "   "    "   
     // data.date0 = document.getElementById("date00").value;   //  "    "  "    "  " "   "   "    "   
