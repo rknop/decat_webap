@@ -1092,6 +1092,8 @@ class RateCands(HandlerBase):
         goodbad = objtab.get_goodbad_for_user( self.webinput["user"] )
             
         self.response += '<form method=\"POST\" action=\"{}ratecands\">\n'.format( webapfullurl )
+        self.response += f"<input type=\"hidden\" name=\"user\" value=\"{self.webinput['user']}\">"
+        self.response += f"<input type=\"hidden\" name=\"password\" value=\"{self.webinput['password']}\">"
         self.response += "<p><button type=\"submit\">Give Me More</button></p>\n"
         self.response += "</form>"
 
@@ -1101,6 +1103,8 @@ class RateCands(HandlerBase):
                                user=self.webinput["user"], passwd=self.webinput["password"] )
         
         self.response += '<form method=\"POST\" action=\"{}ratecands\">\n'.format( webapfullurl )
+        self.response += f"<input type=\"hidden\" name=\"user\" value=\"{self.webinput['user']}\">"
+        self.response += f"<input type=\"hidden\" name=\"password\" value=\"{self.webinput['password']}\">"
         self.response += "<p><button type=\"submit\">Give Me More</button></p>\n"
         self.response += "</form>"
             
