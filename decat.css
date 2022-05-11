@@ -72,6 +72,9 @@ td.vettinglist { border: 2px solid var(--half-faded-color);
 .good { font-weight: bold; color: var(--good-color); }
 .bad { font-weight: bold; color: var(--bad-color); }
 .warning { font-weight: bold; color: var(--warning-color); }
+.italic { font-style: italic }
+.bold { font-style: bold }
+.smaller { font-size: 75% }
 
 span.stack { color: var(--stack-color) }
 tr.stack { background-color: var(--stack-bg) }
@@ -83,7 +86,7 @@ tr.notstack { background-color: var(--indiv-bg) }
         color: var(--link-color);
         text-decoration: var(--link-decoration);
         cursor: pointer;
-        font-size: 100%;
+        /* font-size: 100%; */
       }
 
 .emmarginabove { margin-top: 1em }
