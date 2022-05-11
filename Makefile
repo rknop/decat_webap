@@ -10,6 +10,7 @@ PYTHONPATHDIR = /html
 
 DBDATA = /dbinfo
 DBNAME = db
+# DBNAME_DEV = db_redo
 DBNAME_DEV = db_dev
 # DBNAME_DEV = db
 

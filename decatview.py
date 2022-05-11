@@ -40,7 +40,7 @@ def secure_session():
             "maxb": 90,
             "stackorindiv": "all",
             "allpropornot": "inc",
-            "whichprops": [ '2021B-0149', '2021A-0275', '2020B-0053' ],
+            "whichprops": [ '2022A-724693' ],
             "showvetting": False,
             "offset": 0,
             "numperpage": 100,
@@ -50,7 +50,7 @@ def secure_session():
             "showrb": False,
             "whattodo": "Show Objects",        # ROB THINK ABOUT THIS
             "mindet": 5,
-            "rbtype": 1,
+            "rbtype": 2,
             "rbcut": 0.6,
             "minrb": 5,
             "numdays": 3,
@@ -372,6 +372,8 @@ class FrontPage(HandlerBase):
         self.response += "<div id=\"whichprops_div\" style=\"display: none\">\n"
         for propid,displayprop in [ ('2021A-0113', '2021A-0113: Graham DDF Spring 2021'),
                                     ('2021B-0149', '2021B-0149: Graham DDF Fall 2021'),
+                                    ('2022A-724693', '2022A-724693: Graham DDF Spring 2022'),
+                                    ('2022A-388025', '2022A-388025: DESI-RT Spring 2022'),
                                     ('2021A-0275', '2021A-0275: Rest YSE'),
                                     ('2020B-0053', '2020B-0053: Brount DEBASS') ]:
             self.response += "\n<br>" + form.Checkbox( id=f"whichprops_{propid}", name="whichprops", value=propid,
@@ -449,7 +451,7 @@ class FrontPage(HandlerBase):
         self.response += "<tr><td>Type of field:</td><td class=\"left\">"
         self.response += form.Dropdown( name="vetfieldtype", args=[ ("gal", "Galactic"),
                                                                     ("exgal", "Extragalactic") ],
-                                        value="exgal" ).render()
+                                        value="gal" ).render()
         self.response += "</td></tr>\n"
         self.response += "<tr><td>Objects vetted by others?</td><td class=\"left\">"
         self.response += form.Dropdown( name="vetprerated", args=[ ("yes", "Yes"), ("no", "No") ],
