@@ -17,6 +17,14 @@ import util
 
 # ======================================================================
 
+def logerr( cls, e ):
+    out = io.StringIO()
+    traceback.print_exc( file=out )
+    sys.stderr.write( out.getvalue() )
+    return json.dumps( { "error": f"Exception in {cls}: {e}" } )
+
+# ======================================================================
+
 class HandlerBase:
     def __init__( self ):
         self.response = ""
@@ -102,10 +110,7 @@ class GetRBTypes(HandlerBase):
             return json.dumps( { "status": "ok",
                                  "rbtypes": rbtypes } )
         except Exception as e:
-            out = io.StringIO()
-            traceback.print_exc( file=out )
-            sys.stderr.write( out.getvalue() )
-            return json.dumps( { "error": f"Exception in {self.__class__}: {e}" } )
+            return logerr( self.__class__, e )
         
 
 # ======================================================================
@@ -155,7 +160,8 @@ class FindExposures(HandlerBase):
             exps = []
             for row in res:
                 exposure = row[0]
-                exps.append( { 'filename': exposure.filename,
+                exps.append( { 'id': exposure.id,
+                               'filename': exposure.filename,
                                'filter': exposure.filter,
                                'proposalid': exposure.proposalid,
                                'exptime': exposure.header['EXPTIME'],
@@ -171,10 +177,55 @@ class FindExposures(HandlerBase):
             return json.dumps( { "status": "ok",
                                  "exposures": exps } )
         except Exception as e:
-            out = io.StringIO()
-            traceback.print_exc( file=out )
-            sys.stderr.write( out.getvalue() )
-            return json.dumps( { "error": f"Exception in {self.__class__}: {e}" } )
+            return logerr( self.__class__, e )
+
+# ======================================================================
+
+class CheckpointDefs(HandlerBase):
+    def __init__( self ):
+        super().__init__()
+
+    def do_the_things( self ):
+        try:
+            self.jsontop()
+            q = self.db.db.query(db.CheckpointEventDef).order_by(db.CheckpointEventDef.id)
+            results = q.all()
+            res = {}
+            for row in results:
+                res[row.id] = row.description
+            return json.dumps( res )
+        except Exception as e:
+            return logerr( self.__class__, e )
+
+# ======================================================================
+
+class ExposureLog(HandlerBase):
+    def __init__( self ):
+        super().__init__()
+
+    def do_the_things( self, expid ):
+        try:
+            self.jsontop()
+            q = ( self.db.db.query(db.ProcessCheckpoint)
+                  .filter( db.ProcessCheckpoint.exposure_id==expid )
+                  .order_by( db.ProcessCheckpoint.created_at, db.ProcessCheckpoint.ccdnum ) )
+            results = q.all()
+            res = { "status": "ok",
+                    "checkpoints": [] }
+            for chkpt in results:
+                res["checkpoints"].append(
+                    { "id": chkpt.id,
+                      "exposure_id": chkpt.exposure_id,
+                      "ccdnum": chkpt.ccdnum,
+                      "created_at": chkpt.created_at.isoformat(),
+                      "event_id": chkpt.event_id,
+                      "running_node": chkpt.running_node,
+                      "notes": chkpt.notes,
+                      "mpi_rank": chkpt.mpi_rank } )
+            return json.dumps( res )
+        except Exception as e:
+            return logerr( self.__class__, e )
+
 
 # ======================================================================
 
@@ -182,6 +233,8 @@ urls = (
     '/', "FrontPage",
     '/getrbtypes', "GetRBTypes",
     '/findexposures', "FindExposures",
+    '/checkpointdefs', "CheckpointDefs",
+    '/exposurelog/(.+)', "ExposureLog",
     "/auth", auth.app
     )
 

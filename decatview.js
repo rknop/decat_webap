@@ -1,6 +1,7 @@
 import { webapconfig } from "./decatview_config.js"
 import { rkAuth } from "./rkauth.js"
 import { rkWebUtil } from "./rkwebutil.js"
+import { ExposureList } from "./exposurelist.js"
 
 
 // Namespace
@@ -99,16 +100,16 @@ decatview.Context.prototype.render = function() {
     let p, h2, div, hr, option;
 
     rkWebUtil.wipeDiv( this.maindiv );
+    if ( this.hasOwnProperty( "exposurelister" ) ) {
+        delete this.exposurelister;
+    }
     
     // Exposure Search
 
     rkWebUtil.elemaker( "hr", this.maindiv );
     h2 = rkWebUtil.elemaker( "h2", this.maindiv, { "text": "Exposure Search" } )
     p = rkWebUtil.elemaker( "p", this.maindiv,
-                            { "text": "Enter dates as \"yyyy-mm-dd\" or " +
-                                      "\"yyyy-mm-dd hh:mm:ss\" or " +
-                                      "\"yyyy-mm-dd hh:mm:ss-05:00\" (the last one indicating a time zone " +
-                                      "that is 5 hours before UTC)" } )
+                            { "text": "Enter dates as \"yyyy-mm-dd\" or \"yyyy-mm-dd hh:mm:ss\"" } );
     p = rkWebUtil.elemaker( "p", this.maindiv, { "text": "List exposures from " } );
     this.startdatewid = rkWebUtil.elemaker( "input", p,
                                          { "attributes": { "type": "text",
@@ -123,6 +124,7 @@ decatview.Context.prototype.render = function() {
     if ( this.enddate != null ) {
         this.enddatewid.value = this.enddate;
     }
+    p.appendChild( document.createTextNode( " UTC" ) );
     
     p = rkWebUtil.elemaker( "p", this.maindiv, { "text": "Galactic latitudes between ± " } );
     this.mingallatwid = rkWebUtil.elemaker( "input", p,
@@ -189,7 +191,23 @@ decatview.Context.prototype.render = function() {
                       function() {
                           self.startdate = self.startdatewid.value;
                           self.enddate = self.enddatewid.value;
-                          self.listExposures();
+                          rkWebUtil.wipeDiv( self.maindiv );
+                          self.backToHome( self.maindiv );
+                          let div = rkWebUtil.elemaker( "div", self.maindiv );
+                          let rbinfo = null;
+                          for ( let rb of self.knownrbtypes ) {
+                              if ( rb.id == self.chosenrbtype ) {
+                                  rbinfo = rb;
+                                  break;
+                              }
+                          }
+                          let proplist = null;
+                          if ( self.allproposalsorsome == "some" ) {
+                              proplist = self.selectedproposals;
+                          }
+                          self.exposurelister = new ExposureList( div, self.startdate, self.enddate,
+                                                                  rbinfo, proplist, self.connector );
+                          self.exposurelister.render();
                       } );
 
     // Candidate Lookup
@@ -245,119 +263,6 @@ decatview.Context.prototype.updateSelectedProposals = function() {
     for ( let checkbox of this.propcheckboxes ) {
         if ( checkbox.checked ) {
             this.selectedproposals.push( checkbox.value );
-        }
-    }
-}
-
-// **********************************************************************
-// List exposures
-
-decatview.Context.prototype.listExposures = function() {
-    var self = this;
-
-    rkWebUtil.wipeDiv( this.maindiv );
-    this.backToHome( this.maindiv );
-
-    let p = rkWebUtil.elemaker( "p", this.maindiv, { "text": "Loading exposures from " +
-                                                 this.startdate + " to " + this.enddate } );
-    if ( this.allproposalsorsome == "all" ) {
-        p = rkWebUtil.elemaker( "p", this.maindiv, { "text": "Showing exposures from ALL proposals." } );
-    }
-    else {
-        p = rkWebUtil.elemaker( "p", this.maindiv, { "text": "Showing exposures from proposals: " } );
-        let first = true;
-        let text = "";
-        for ( let prop of this.selectedproposals ) {
-            if ( first ) first=false;
-            else text += ", ";
-            text += prop;
-        }
-        p.appendChild( document.createTextNode( text ) );
-    }
-
-    p = rkWebUtil.elemaker( "p", this.maindiv, { "text": "r/b type is " + this.chosenrbtype } );
-    for ( let rbinfo of this.knownrbtypes ) {
-        if ( rbinfo.id == this.chosenrbtype ) {
-            p.appendChild( document.createTextNode( "(" + rbinfo.description + ") ; cutoff is " + rbinfo.rbcut ) );
-            this.rbcut = rbinfo.rbcut;
-            break;
-        }
-    }
-
-    this.exposuresdiv = rkWebUtil.elemaker( "div", this.maindiv );
-
-    this.showExposures( this.startdatewid.value, this.enddatewid.value, this.chosenrbtype, this.rbcut,
-                        this.selectedproposals );
-}
-
-// **********************************************************************
-// Show tiles for up to 100 objects
-//
-// ROB : it's gratuitous to pass rbcut to the webap, since that
-//  information is in the database that the server has.  I did it
-//  because I was being lazy about constructing my queries server side.
-
-decatview.Context.prototype.showExposures = function( t0text, t1text, rb, rbcut, props ) {
-    var self = this;
-    this.connector.sendHttpRequest( "findexposures",
-                                    { "t0": t0text,
-                                      "t1": t1text,
-                                      "rbtype": rb,
-                                      "rbcut": rbcut,
-                                      "allorsomeprops": this.allproposalsorsome,
-                                      "props": props },
-                                    function(data) { self.actuallyShowExposures( data ) } );
-}
-
-decatview.Context.prototype.actuallyShowExposures = function( data ) {
-    var self = this;
-    
-    if ( data.hasOwnProperty( "error" ) ) {
-        window.alert( data["error"] );
-        return;
-    }
-
-    var table = rkWebUtil.elemaker( "table", this.exposuresdiv, { "classes": [ "exposurelist" ] } );
-    var tr = rkWebUtil.elemaker( "tr", table );
-    rkWebUtil.elemaker( "th", tr, { "text": "Exposure" } );
-    rkWebUtil.elemaker( "th", tr, { "text": "Band" } );
-    rkWebUtil.elemaker( "th", tr, { "text": "propid" } );
-    rkWebUtil.elemaker( "th", tr, { "text": "t_exp" } );
-    rkWebUtil.elemaker( "th", tr, { "text": "ra" } );
-    rkWebUtil.elemaker( "th", tr, { "text": "dec" } );
-    rkWebUtil.elemaker( "th", tr, { "text": "l" } );
-    rkWebUtil.elemaker( "th", tr, { "text": "b" } );
-    rkWebUtil.elemaker( "th", tr, { "text": "#Subs" } );
-    rkWebUtil.elemaker( "th", tr, { "text": "#Done" } );
-    rkWebUtil.elemaker( "th", tr, { "text": "N.Srcs" } );
-    rkWebUtil.elemaker( "th", tr, { "text": "rb≥cut" } );
-
-    for ( let exposure of data["exposures"] ) {
-        let td, button;
-        let tr = rkWebUtil.elemaker( "tr", table );
-        if ( exposure.is_stack ) {
-            tr.classList.add( "stack" );
-        } else {
-            tr.classList.add( "notstack" );
-        }
-        rkWebUtil.elemaker( "td", tr, { "text": exposure.filename } );
-        rkWebUtil.elemaker( "td", tr, { "text": exposure.filter } );
-        rkWebUtil.elemaker( "td", tr, { "text": exposure.proposalid } );
-        rkWebUtil.elemaker( "td", tr, { "text": exposure.exptime.toFixed(1) } );
-        rkWebUtil.elemaker( "td", tr, { "text": exposure.ra.toFixed(4) } );
-        rkWebUtil.elemaker( "td", tr, { "text": exposure.dec.toFixed(4) } );
-        rkWebUtil.elemaker( "td", tr, { "text": exposure.gallong.toFixed(4) } );
-        rkWebUtil.elemaker( "td", tr, { "text": exposure.gallat.toFixed(4) } );
-        rkWebUtil.elemaker( "td", tr, { "text": exposure.numsubs } );
-        rkWebUtil.elemaker( "td", tr, { "text": exposure.numdone } );
-        rkWebUtil.elemaker( "td", tr, { "text": exposure.numobjs } );
-        rkWebUtil.elemaker( "td", tr, { "text": exposure.numhighrbobjs } );
-        td = rkWebUtil.elemaker( "td", tr );
-        button = rkWebUtil.button( td, "Show Objects", function() { self.showExposureObjects( exposure.id ) } );
-        td = rkWebUtil.elemaker( "td", tr );
-        button = rkWebUtil.button( td, "Show Log", function() { self.showExposureLog( exposure.id ) } );
-        if ( exposure.numerrors > 0 ) {
-            rkWebUtil.elemaker( "td", tr, { "text": exposure.numerrors + " errors", "classes": [ "bad" ] } );
         }
     }
 }
