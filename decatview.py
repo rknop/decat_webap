@@ -5,6 +5,7 @@ import pathlib
 import web
 import json
 import traceback
+import base64
 
 import sqlalchemy as sa
 
@@ -29,6 +30,9 @@ class HandlerBase:
     def __init__( self ):
         self.response = ""
         self.db = db.DB.get()
+
+    def __del__( self ):
+        self.db.close()
         
     def GET( self, *args, **kwargs ):
         return self.do_the_things( *args, **kwargs )
@@ -154,9 +158,7 @@ class FindExposures(HandlerBase):
                 q = q.filter( db.Exposure.proposalid.in_( data['props'] ) )
             q = q.group_by( db.Exposure )
             q = q.order_by( db.Exposure.mjd )
-            sys.stderr.write( f"Sending query: {str(q)}\n" )
             res = q.all()
-            sys.stderr.write( f"Got {len(res)} responses\n" )
             exps = []
             for row in res:
                 exposure = row[0]
@@ -229,12 +231,98 @@ class ExposureLog(HandlerBase):
 
 # ======================================================================
 
+class CutoutsForExposure(HandlerBase):
+    def __init__( self ):
+        super().__init__()
+
+    def do_the_things( self, expid ):
+        try:
+            self.jsontop()
+            data = json.loads( web.data() )
+            hasrb = "rbtype" in data and data["rbtype"] is not None
+
+            # I tried doing this in one bigass query, but made a mess
+            # I'm not sure I fully understand what sqlalchemy does when
+            # you query multiple tables with joins and stuff.  Something
+            # to be said for just sticking to SQL, because with an ORM you
+            # have to learn the ORM's language *in addition to* learning SQL.
+            # (My experience suggests that using an ORM does *not* make it
+            # unnecessary to understand the SQL....)
+
+            # Get all objects
+            q = ( self.db.db.query( db.Object, db.Subtraction.ccdnum, db.Exposure.filename )
+                  .join( db.Subtraction, db.Subtraction.id==db.Object.subtraction_id )
+                  .join( db.Exposure, db.Exposure.id==db.Subtraction.exposure_id )
+                  .filter( db.Exposure.id==expid ) )
+            objres = q.all()
+            totnobjs = len(objres)
+
+            objids =[]
+            objs = {}
+            for row in objres:
+                obj = row[0]
+                ccdnum = row[1]
+                filename = row[2]
+                objids.append( obj.id )
+                objs[ obj.id ] = {
+                    "object_id": obj.id,
+                    "ra": obj.ra,
+                    "dec": obj.dec,
+                    "candid": obj.candidate_id,
+                    "filename": filename,
+                    "ccdnum": ccdnum,
+                    "rb": None,
+                    "sci_jpeg": None,
+                    "ref_jpeg": None,
+                    "diff_jpeg": None
+                }
+            
+            # Get RBs and sort objects
+            if hasrb:
+                q = ( self.db.db.query( db.ObjectRB )
+                      .filter( db.ObjectRB.rbtype_id==data["rbtype"] )
+                      .filter( db.ObjectRB.object_id.in_( objids ) ) )
+                res = q.all()
+                for rb in res:
+                    objs[ rb.object_id ]['rb'] = rb.rb
+            objids.sort( key=lambda i: ( 9999 if objs[i]['rb'] is None else -objs[i]['rb'], i ) )
+
+            # Trim if requested
+            start = 0
+            end = totnobjs
+            if "offset" in data and data["offset"] is not None:
+                start = min( totnobjs, max( data["offset"], 0 ) )
+            if "limit" in data and data["limit"] is not None:
+                end = min( totnobjs, start + data["limit"] )
+            objids = objids[start:end]
+            
+            # Get cutouts for trimmed list
+            q = ( self.db.db.query( db.Cutout )
+                  .filter( db.Cutout.object_id.in_( objids ) ) )
+            cutouts = q.all()
+            for cutout in cutouts:
+                objs[cutout.object_id]["sci_jpeg"] = base64.b64encode(cutout.sci_jpeg).decode('ascii')
+                objs[cutout.object_id]["ref_jpeg"] = base64.b64encode(cutout.ref_jpeg).decode('ascii')
+                objs[cutout.object_id]["diff_jpeg"] = base64.b64encode(cutout.diff_jpeg).decode('ascii')
+
+            results = { "totnobjs": totnobjs,
+                        "offset": start,
+                        "num": end-start,
+                        "objs": [ objs[i] for i in objids  ] }
+            return json.dumps( results )
+        except Exception as e:
+            return logerr( self.__class__, e )
+            
+
+# ======================================================================
+
 urls = (
     '/', "FrontPage",
     '/getrbtypes', "GetRBTypes",
     '/findexposures', "FindExposures",
     '/checkpointdefs', "CheckpointDefs",
     '/exposurelog/(.+)', "ExposureLog",
+    '/cutoutsforexp/(.+)', "CutoutsForExposure",
     "/auth", auth.app
     )
 

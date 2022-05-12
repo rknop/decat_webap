@@ -73,7 +73,7 @@ td.vettinglist { border: 2px solid var(--half-faded-color);
 .bad { font-weight: bold; color: var(--bad-color); }
 .warning { font-weight: bold; color: var(--warning-color); }
 .italic { font-style: italic }
-.bold { font-style: bold }
+.bold { font-weight: bold }
 .smaller { font-size: 75% }
 
 span.stack { color: var(--stack-color) }

@@ -6,7 +6,7 @@ INSTALLDIR_DEV = /global/cfs/cdirs/m937/decat-webap/html_dev
 
 toinstall = .htaccess decat.css decatview.py db.py auth.py decatview_config.py util.py \
 	decatview.js decatview_start.js decatview_config.js aes.js jsencrypt.min.js rkauth.js rkwebutil.js \
-	exposurelist.js
+	exposurelist.js cutoutlist.js
 
 toclean = decatview_config.js decatview_config.py
 
