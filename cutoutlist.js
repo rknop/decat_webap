@@ -1,14 +1,18 @@
 import { rkWebUtil } from "./rkwebutil.js"
 
+// Not 100% happy to be importing this here.  Should think about refactoring.
+import { webapconfig } from "./decatview_config.js"
+
 // **********************************************************************
 
 var CutoutList = function( div, options={} ) {
     this.div = div;
     this.options = {
-        "showltcvs": false,
+        "showcandid": true,
         "showfilename": false,
         "showband": false,
         "showrbs": true,
+        "showmag": true,
         "goodbadinterface": false,
         "imgsize": 204,
         "imgclass": "img",
@@ -31,22 +35,39 @@ CutoutList.prototype.render = function( cutoutdata )  {
     for ( let data of cutoutdata ) {
         tr = rkWebUtil.elemaker( "tr", table );
         td = rkWebUtil.elemaker( "td", tr );
-        // ROB TODO : link on candid
-        td.appendChild( document.createTextNode( "Candidate: " ) );
-        rkWebUtil.elemaker( "span", td, { "text": data.candid } );
+        if ( this.options.showcandid ) {
+            td.appendChild( document.createTextNode( "Candidate: " ) );
+            let href = webapconfig.webapurl + "cand/" + data.candid;
+            if ( this.options.rbinfo != null ) href += "?rbtype=" + this.options.rbinfo.id
+            rkWebUtil.elemaker( "a", td, { "text": data.candid,
+                                           "classes": [ "link" ],
+                                           "attributes": { "href": href, "target": "_blank" } } );
+        }
         if ( this.options.showrbs ) {
             rkWebUtil.elemaker( "br", td );
-            span = rkWebUtil.elemaker( "span", td, { "text": "rb: " + data.rb.toFixed(2) } );
-            if ( this.options.rbinfo != null ) {
-                if ( data.rb >= this.options.rbinfo.rbcut )
-                    span.classList.add( "good" );
-                else
-                    span.classList.add( "bad" );
+            if ( data.rb == null ) {
+                span = rkWebUtil.elemaker( "span", td, { "text": "rb: (unknown)"} );
+                span.classList.add( "bold" );
+                span.classList.add( "italic" );
             }
-            else span.classList.add( "bold" );
+            else {
+                span = rkWebUtil.elemaker( "span", td, { "text": "rb: " + data.rb.toFixed(2) } );
+                if ( this.options.rbinfo != null ) {
+                    if ( data.rb >= this.options.rbinfo.rbcut )
+                        span.classList.add( "good" );
+                    else
+                        span.classList.add( "bad" );
+                }
+                else span.classList.add( "bold" );
+            }
         }
         rkWebUtil.elemaker( "br", td );
         rkWebUtil.elemaker( "span", td, { "text": "α: " + data.ra.toFixed(5) + "  δ: " + data.dec.toFixed(5) } );
+        if ( this.options.showmag ) {
+            rkWebUtil.elemaker( "br", td );
+            rkWebUtil.elemaker( "span", td, { "text": "Mag: " + data.mag.toFixed(3) + 
+                                              " ± " + data.magerr.toFixed(3) } );
+        }
         if ( this.options.showfilename ) {
             rkWebUtil.elemaker( "br", td );
             rkWebUtil.elemaker( "span", td, { "text": "File: " + data.filename } );

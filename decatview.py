@@ -51,7 +51,8 @@ class HandlerBase:
         self.jsontop()
         self.verifyauth()
     
-    def htmltop( self, title=None, h1=None, statusdiv=False, includejsstart=False ):
+    def htmltop( self, title=None, h1=None, statusdiv=False, includejsstart=False,
+                 jsstart="decatview_start.js", addjs=[] ):
         web.header('Content-Type', 'text/html; charset="UTF-8"')
         webapdirurl = str( pathlib.Path( web.ctx.homepath ).parent )
         # Gah... hate all the special case crap
@@ -67,9 +68,11 @@ class HandlerBase:
         self.response += f"<link href=\"{webapdirurl}decat.css\" rel=\"stylesheet\" type=\"text/css\">\n"
         self.response += f"<script src=\"{webapdirurl}aes.js\"></script>\n"
         self.response += f"<script src=\"{webapdirurl}jsencrypt.min.js\"></script>\n"
-        self.response += f"<script src=\"{webapdirurl}decatview.js\" type=\"module\"></script>\n"
+        # self.response += f"<script src=\"{webapdirurl}decatview.js\" type=\"module\"></script>\n"
+        for js in addjs:
+            self.response += f"<script src=\"{webapdirurl}{js}\"></script>\n"
         if includejsstart:
-            self.response += f"<script src=\"{webapdirurl}decatview_start.js\" type=\"module\"></script>\n"
+            self.response += f"<script src=\"{webapdirurl}{jsstart}\" type=\"module\"></script>\n"
         self.response += "</head>\n<body>\n"
         if statusdiv:
             self.htmlstatusdiv()
@@ -94,6 +97,24 @@ class FrontPage(HandlerBase):
         self.htmlbottom()
         return self.response
         
+
+# ======================================================================
+
+class ShowCand(HandlerBase):
+    def __init__( self ):
+        super().__init__()
+
+    def do_the_things( self, candid ):
+        self.htmltop( includejsstart=True, statusdiv=True, jsstart="decatview_showcand_start.js" )
+        self.response += f"<input type=\"hidden\" id=\"showcand_candid\" value=\"{candid}\">\n"
+        webinput = web.input()
+        if "rbtype" in webinput.keys():
+            self.response += f"<input type=\"hidden\" id=\"rbtype\" value=\"{webinput.rbtype}\">\n"
+        else:
+            self.response += "<input type=\"hidden\" id=\"rbtype\" value=\"None\">\n"
+        self.response += "<div id=\"main-div\"></div>\n"
+        self.htmlbottom()
+        return self.response
 
 # ======================================================================
 
@@ -231,7 +252,91 @@ class ExposureLog(HandlerBase):
 
 # ======================================================================
 
-class CutoutsForExposure(HandlerBase):
+class Cutouts(HandlerBase):
+    def __init__( self ):
+        super().__init__()
+
+    def get_cutouts( self, expid=None, candid=None, sort="rb", rbtype=None, offset=None, limit=None ):
+        if ( expid is None ) and ( candid is None ):
+            raise RuntimeError( "Must specify either expid or candid" )
+        
+        q = ( self.db.db.query( db.Object, db.Subtraction.ccdnum,
+                                db.Exposure.filename, db.Exposure.mjd, db.Exposure.proposalid, db.Exposure.filter )
+              .join( db.Subtraction, db.Subtraction.id==db.Object.subtraction_id )
+              .join( db.Exposure, db.Exposure.id==db.Subtraction.exposure_id ) )
+        if expid is not None:
+            q = q.filter( db.Exposure.id == expid )
+        else:
+            q = q.filter( db.Object.candidate_id == candid )
+        objres = q.all()
+        totnobjs = len(objres)
+
+        objids =[]
+        objs = {}
+        for row in objres:
+            obj, ccdnum, filename, mjd, propid, band = row
+            objids.append( obj.id )
+            objs[ obj.id ] = {
+                "object_id": obj.id,
+                "ra": obj.ra,
+                "dec": obj.dec,
+                "candid": obj.candidate_id,
+                "filename": filename,
+                "mjd": mjd,
+                "proposalid": propid,
+                "ccdnum": ccdnum,
+                "filter": band,
+                "flux": obj.flux,
+                "fluxerr": obj.fluxerr,
+                "mag": obj.mag,
+                "magerr": obj.magerr,
+                "rb": None,
+                "sci_jpeg": None,
+                "ref_jpeg": None,
+                "diff_jpeg": None
+            }
+
+        # Get RBs and sort objects
+        if rbtype is not None:
+            q = ( self.db.db.query( db.ObjectRB )
+                  .filter( db.ObjectRB.rbtype_id==rbtype )
+                  .filter( db.ObjectRB.object_id.in_( objids ) ) )
+            res = q.all()
+            for rb in res:
+                objs[ rb.object_id ]['rb'] = rb.rb
+        if sort == "rb":
+            objids.sort( key=lambda i: ( 9999 if objs[i]['rb'] is None else -objs[i]['rb'], i ) )
+        elif sort == "mjd":
+            objids.sort( key=lambda i: objs[i]['mjd'] )
+        else:
+            raise ValueError( f"Unknown sort scheme {sort}" )
+
+        # Trim if requested
+        start = 0
+        end = totnobjs
+        if offset is not None:
+            start = min( totnobjs, max( offset, 0 ) )
+        if limit is not None:
+            end = min( totnobjs, start + limit )
+        objids = objids[start:end]
+
+        # Get cutouts for trimmed list
+        q = ( self.db.db.query( db.Cutout )
+              .filter( db.Cutout.object_id.in_( objids ) ) )
+        cutouts = q.all()
+        for cutout in cutouts:
+            objs[cutout.object_id]["sci_jpeg"] = base64.b64encode(cutout.sci_jpeg).decode('ascii')
+            objs[cutout.object_id]["ref_jpeg"] = base64.b64encode(cutout.ref_jpeg).decode('ascii')
+            objs[cutout.object_id]["diff_jpeg"] = base64.b64encode(cutout.diff_jpeg).decode('ascii')
+
+        results = { "totnobjs": totnobjs,
+                    "offset": start,
+                    "num": end-start,
+                    "objs": [ objs[i] for i in objids  ] }
+        return results
+        
+
+class CutoutsForExposure(Cutouts):
     def __init__( self ):
         super().__init__()
 
@@ -239,90 +344,42 @@ class CutoutsForExposure(HandlerBase):
         try:
             self.jsontop()
             data = json.loads( web.data() )
-            hasrb = "rbtype" in data and data["rbtype"] is not None
-
-            # I tried doing this in one bigass query, but made a mess
-            # I'm not sure I fully understand what sqlalchemy does when
-            # you query multiple tables with joins and stuff.  Something
-            # to be said for just sticking to SQL, because with an ORM you
-            # have to learn the ORM's language *in addition to* learning SQL.
-            # (My experience suggests that using an ORM does *not* make it
-            # unnecessary to understand the SQL....)
-
-            # Get all objects
-            q = ( self.db.db.query( db.Object, db.Subtraction.ccdnum, db.Exposure.filename )
-                  .join( db.Subtraction, db.Subtraction.id==db.Object.subtraction_id )
-                  .join( db.Exposure, db.Exposure.id==db.Subtraction.exposure_id )
-                  .filter( db.Exposure.id==expid ) )
-            objres = q.all()
-            totnobjs = len(objres)
-
-            objids =[]
-            objs = {}
-            for row in objres:
-                obj = row[0]
-                ccdnum = row[1]
-                filename = row[2]
-                objids.append( obj.id )
-                objs[ obj.id ] = {
-                    "object_id": obj.id,
-                    "ra": obj.ra,
-                    "dec": obj.dec,
-                    "candid": obj.candidate_id,
-                    "filename": filename,
-                    "ccdnum": ccdnum,
-                    "rb": None,
-                    "sci_jpeg": None,
-                    "ref_jpeg": None,
-                    "diff_jpeg": None
-                }
+            rbtype = data["rbtype"] if "rbtype" in data else None
+            limit = data["limit"] if "limit" in data else None
+            offset = data["offset"] if "offset" in data else None
+            return json.dumps( self.get_cutouts( expid=expid, sort="rb", rbtype=rbtype, offset=offset, limit=limit ) )
+        except Exception as e:
+            return logerr( self.__class__, e )
             
-            # Get RBs and sort objects
-            if hasrb:
-                q = ( self.db.db.query( db.ObjectRB )
-                      .filter( db.ObjectRB.rbtype_id==data["rbtype"] )
-                      .filter( db.ObjectRB.object_id.in_( objids ) ) )
-                res = q.all()
-                for rb in res:
-                    objs[ rb.object_id ]['rb'] = rb.rb
-            objids.sort( key=lambda i: ( 9999 if objs[i]['rb'] is None else -objs[i]['rb'], i ) )
+class CutoutsForCandidate(Cutouts):
+    def __init__( self ):
+        super().__init__()
 
-            # Trim if requested
-            start = 0
-            end = totnobjs
-            if "offset" in data and data["offset"] is not None:
-                start = min( totnobjs, max( data["offset"], 0 ) )
-            if "limit" in data and data["limit"] is not None:
-                end = min( totnobjs, start + data["limit"] )
-            objids = objids[start:end]
-            
-            # Get cutouts for trimmed list
-            q = ( self.db.db.query( db.Cutout )
-                  .filter( db.Cutout.object_id.in_( objids ) ) )
-            cutouts = q.all()
-            for cutout in cutouts:
-                objs[cutout.object_id]["sci_jpeg"] = base64.b64encode(cutout.sci_jpeg).decode('ascii')
-                objs[cutout.object_id]["ref_jpeg"] = base64.b64encode(cutout.ref_jpeg).decode('ascii')
-                objs[cutout.object_id]["diff_jpeg"] = base64.b64encode(cutout.diff_jpeg).decode('ascii')
-
-            results = { "totnobjs": totnobjs,
-                        "offset": start,
-                        "num": end-start,
-                        "objs": [ objs[i] for i in objids  ] }
+    def do_the_things( self, candid ):
+        try:
+            self.jsontop()
+            data = json.loads( web.data() )
+            rbtype = data["rbtype"] if "rbtype" in data else None
+            results = self.get_cutouts( candid=candid, rbtype=rbtype )
+            q = self.db.db.query( db.Candidate ).filter( db.Candidate.id==candid )
+            cand = q.all()[0]
+            results["candra"] = cand.ra
+            results["canddec"] = cand.dec
             return json.dumps( results )
         except Exception as e:
             return logerr( self.__class__, e )
             
-
 # ======================================================================
 
 urls = (
     '/', "FrontPage",
+    '/cand/(.+)', "ShowCand",
     '/getrbtypes', "GetRBTypes",
     '/findexposures', "FindExposures",
     '/checkpointdefs', "CheckpointDefs",
     '/exposurelog/(.+)', "ExposureLog",
     '/cutoutsforexp/(.+)', "CutoutsForExposure",
+    '/cutoutsforcand/(.+)', "CutoutsForCandidate",
     "/auth", auth.app
     )
 

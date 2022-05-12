@@ -143,7 +143,6 @@ ExposureList.prototype.showExposureLog = function( exposureid ) {
 
 ExposureList.prototype.okNowShowExposureLog = function( exposureid, logdiv ) {
     var self = this;
-    console.log( "About to ack for exposurelog/" + exposureid + " at " + new Date() );
     this.connector.sendHttpRequest( "exposurelog/" + exposureid, {},
                                     function( data ) {
                                         self.actuallyShowExposureLog( data, logdiv ) } );
@@ -264,13 +263,11 @@ ExposureList.prototype.showExposureObjects = function( expid, filename ) {
     rkWebUtil.elemaker( "p", this.cutoutdiv, { "text": "Loading object cutouts...",
                                                "classes": [ "warning" ] } );
     this.cutouts = new CutoutList( this.cutoutdiv, { "rbinfo": this.rbinfo } );
-    console.log( "Sending request for cutoutsforexp/" + this.shown_objects_expid + " at " + new Date() );
     this.connector.sendHttpRequest( "cutoutsforexp/" + this.shown_objects_expid,
                                     { "rbtype": this.rbinfo.id,
                                       "offset": 0,
                                       "limit": 100 },
                                     function( data ) {
-                                        console.log( "In anonymous callback at " + new Date() );
                                         self.renderExposureObjects( data )
                                     } );
 }
@@ -278,7 +275,6 @@ ExposureList.prototype.showExposureObjects = function( expid, filename ) {
 // **********************************************************************
 
 ExposureList.prototype.renderExposureObjects = function( data ) {
-    console.log( "In renderExposureObjects at " + new Date() );
     var self = this;
     rkWebUtil.wipeDiv( this.abovecutoutdiv );
     rkWebUtil.wipeDiv( this.belowcutoutdiv );
@@ -297,30 +293,6 @@ ExposureList.prototype.renderExposureObjects = function( data ) {
     }
     
     for ( let div of [ this.abovecutoutdiv, this.belowcutoutdiv ] ) {
-        if ( data.offset > 0 ) {
-            let prevoff = data.offset - 100;
-            if ( data.offset < 100 ) prevoff = 0;
-            if ( prevoff > 0 ) {
-                rkWebUtil.button( div, "First 100",
-                                  function() {
-                                      self.connector.sendHttpRequest(
-                                          "cutoutsforexp/" + self.shown_objects_expid,
-                                          { "rbtype": self.rbinfo.id,
-                                            "offset": 0,
-                                            "limit": 100 },
-                                          handlereq ) } );
-                div.appendChild( document.createTextNode( " " ) )
-            }
-            rkWebUtil.button( div, "Previous 100",
-                              function() {
-                                  self.connector.sendHttpRequest(
-                                      "cutoutsforexp/" + self.shown_objects_expid,
-                                      { "rbtype": self.rbinfo.id,
-                                        "offset": prevoff,
-                                        "limit": 100 },
-                                      handlereq ) } );
-                div.appendChild( document.createTextNode( " " ) )
-        }
         if ( data.offset + 100 < data.totnobjs ) {
             rkWebUtil.button( div, "Next 100",
                               function() {
@@ -330,6 +302,30 @@ ExposureList.prototype.renderExposureObjects = function( data ) {
                                         "offset": data.offset + 100,
                                         "limit": 100 },
                                       handlereq ) } );
+            div.appendChild( document.createTextNode( " " ) )
+        }
+        if ( data.offset > 0 ) {
+            let prevoff = data.offset - 100;
+            if ( data.offset < 100 ) prevoff = 0;
+            rkWebUtil.button( div, "Previous 100",
+                              function() {
+                                  self.connector.sendHttpRequest(
+                                      "cutoutsforexp/" + self.shown_objects_expid,
+                                      { "rbtype": self.rbinfo.id,
+                                        "offset": prevoff,
+                                        "limit": 100 },
+                                      handlereq ) } );
+            div.appendChild( document.createTextNode( " " ) )
+            if ( prevoff > 0 ) {
+                rkWebUtil.button( div, "First 100",
+                                  function() {
+                                      self.connector.sendHttpRequest(
+                                          "cutoutsforexp/" + self.shown_objects_expid,
+                                          { "rbtype": self.rbinfo.id,
+                                            "offset": 0,
+                                            "limit": 100 },
+                                          handlereq ) } );
+            }
         }
     }
     this.cutouts.render( data.objs );
