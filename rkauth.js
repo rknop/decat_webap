@@ -10,17 +10,17 @@ import { rkWebUtil } from "./rkwebutil.js"
 // * There is a div (passed to the constructor) that rkAuth can do whatever it wants to
 // * CSS classes .link and .center are defined
 
-var rkAuth = function( authdiv, webapurl, finishlogincallback, errorhandler=null ) {
+var rkAuth = function( authdiv, webapurl, finishlogincallback, notauthcallback=null, errorhandler=null ) {
     /** Handle authentication with auth.py server side
      *
      * Make one of these.  Pass it a div it can do whatever the hell it
      * wants to, the URL for the webap (doesn't have to be absolute),
-     * and a callback for when the user is authenticated.  It's
+     * and a default callback for when the user is authenticated.  It's
      * expecting that the webap has /auth/... as defined by auth.py.
      *
      * Call the object's checkAuth method with a callback to call if authenticated,
      * and one to call if not.  If isauthcallback is null, it'll call the
-     * finishlogicallback passed to th econstructor.  If isnotauthcallback
+     * finishlogicallback passed to the constructor.  If isnotauthcallback
      * is null, it'll call showLoginUI.
      *
      * The object will have properties:
@@ -35,10 +35,16 @@ var rkAuth = function( authdiv, webapurl, finishlogincallback, errorhandler=null
      * Also needed: resetpasswd_start.js
      * **** Must edit that one to set webapurl **** (sad)
      */
+
+    var self = this;
     
     this.authdiv = authdiv;
     this.webapurl = webapurl;
     this.finishlogincallback = finishlogincallback;
+    if ( notauthcallback != null )
+        this.notauthcallback = notauthcallback;
+    else
+        this.notauthcallback = function() { self.showLoginUI() };
     if ( errorhandler != null )
         this.errorhandler = errorhandler;
     else
@@ -98,17 +104,41 @@ rkAuth.prototype.processCheckAuth = function( statedata, isauthcallback, isnotau
         if ( isauthcallback != null )
             isauthcallback();
         else
-            self.finishlogincallback();
+            this.finishlogincallback();
     }
     else {
         this.authenticated = false;
         if ( isnotauthcallback != null )
             isnotauthcallback();
         else
-            self.showLoginUI();
+            this.notauthcallback();
     }
 }
     
+
+// **********************************************************************
+
+rkAuth.prototype.logout = function( loggedoutcallback=null ) {
+    var self=this;
+    rkWebUtil.wipeDiv( this.authdiv );
+    rkWebUtil.elemaker( "p", this.authdiv, { "text": "...logging out..." } )
+    this.conn.sendHttpRequest( "auth/logout", null,
+                               function() { self.loggedout( loggedoutcallback ), self.errorhandler } );
+}
+
+rkAuth.prototype.loggedout = function( loggedoutcallback ) {
+    this.authenticated = false;
+    this.username = null;
+    this.useruuid = null;
+    this.useremail = null;
+    this.userdisplayname = null;
+    if ( loggedoutcallback != null ) {
+        loggedoutcallback()
+    } else {
+        rkWebUtil.wipeDiv( this.authdiv );
+        rkWebUtil.elemaker( "p", this.authdiv, { "text": "Logged out." } );
+    }
+}
 
 // **********************************************************************
 
@@ -264,8 +294,12 @@ rkAuth.prototype.requestPasswordLink = function() {
 // **********************************************************************
 
 rkAuth.prototype.passwordLinkSent = function( res ) {
+    var self = this;
     rkWebUtil.wipeDiv( this.authdiv );
     rkWebUtil.elemaker( "p", this.authdiv, { "text": res.status } );
+    rkWebUtil.elemaker( "p", this.authdiv, { "text": "Back to login",
+                                             "classes": [ "link" ],
+                                             "click": function() { self.checkAuth() } } );
 }
 
 // **********************************************************************

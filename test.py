@@ -39,12 +39,17 @@ class HelloWorld(HandlerBase):
         # self.response += "</pre>\n"
 
         self.response += "<p>sys.argv = {}</p>\n".format( sys.argv )
-        
+
+        self.response += "<h3>Environment variables:</h3>\n"
         self.response += "<ul>\n"
         for key in web.ctx.environ:
             self.response += "<li>{} = {}</li>\n".format( key, web.ctx.environ[key] )
         self.response += "</ul>\n"
 
+        self.response += "<h3>web.ctx properties:</h3>\n"
+        self.response += "<ul>\n";
+        for key, value in vars(web.ctx).items():
+            self.response += f"<li>{key} = {value}</li>\n"
         
         self.htmlbottom()
         return self.response

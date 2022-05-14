@@ -1,3 +1,4 @@
 DBdata = "/dbinfo"
-DBname = "db_dev"
+DBname = "db"
+# DBname = "db_dev"
 

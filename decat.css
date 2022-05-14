@@ -60,8 +60,9 @@ table.candlist td { border-bottom: 2px solid var(--half-faded-color);
                     padding-right: 1ex;
                   }
 
-table.candsearchparams td { text-align: right }
 table.candsearchparams td.left { text-align: left }
+table.candsearchparams td.right { text-align: right }
+table.candsearchparams td { text-align: right }
 
 td.vettinglist { border: 2px solid var(--half-faded-color);
                  border-spacing: 2px;
@@ -75,6 +76,9 @@ td.vettinglist { border: 2px solid var(--half-faded-color);
 .italic { font-style: italic }
 .bold { font-weight: bold }
 .smaller { font-size: 75% }
+
+.padex { padding: 1ex }
+.margex { margin: 1ex }
 
 span.stack { color: var(--stack-color) }
 tr.stack { background-color: var(--stack-bg) }

@@ -20,6 +20,21 @@ Base = sqlalchemy.ext.automap.automap_base()
 
 # ======================================================================
 
+NULLUUID = uuid.UUID( '00000000-0000-0000-0000-000000000000' )
+
+def asUUID( val, canbenone=True ):
+    if val is None:
+        if canbenone:
+            return None
+        else:
+            return NULLUUID
+    if isinstance( val, uuid.UUID ):
+        return val
+    else:
+        return uuid.UUID( val )
+
+# ======================================================================
+
 class DB(object):
     _engine = None
     _sessionfac = None
@@ -116,6 +131,7 @@ class HasPrimaryID(object):
             return q[0]
     
 class HasPrimaryUUID(HasPrimaryID):
+    id = sa.Column( sqlUUID(as_uuid=True), primary_key=True, default=uuid.uuid4 )
     @classmethod
     def get( cls, id, curdb=None ):
         id = id if isinstance( id, uuid.UUID) else uuid.UUID( id )

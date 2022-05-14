@@ -174,9 +174,9 @@ class GetPasswordResetLink(HandlerBase):
             sentto = ""
             for user in them:
                 link = db.PasswordLink.new( user.id )
-                web.sendmail( "PhotoDB <rknop@pobox.com>", user.email, "PhotoDB password reset",
+                web.sendmail( "DECat Webap <raknop@lbl.gov>", user.email, "DECat webap password reset",
                               f'Somebody requested a password reset for {user.username}\n' +
-                              f'for PhotoDB.  This link will expire in 1 hour.\n'
+                              f'for the LBL DECat Webap.  This link will expire in 1 hour.\n'
                               f'If you did not request this, you may ignore this message.\n' +
                               f'Here is the link; cut and paste it into your browser:\n\n' +
                               f'{web.ctx.home}/resetpassword?uuid={str(link.id)}' )
@@ -201,12 +201,16 @@ class ResetPassword(HandlerBase):
         response += "<html>\n<head>\n<meta charset=\"UTF-8\">\n"
         response += f"<title>Password Reset</title>\n"
 
-        webapdirurl = str( pathlib.Path( web.ctx.env['SCRIPT_NAME'] ).parent )
+        # webapdirurl = str( pathlib.Path( web.ctx.env['SCRIPT_NAME'] ).parent )
+        webapdirurl = str( pathlib.Path( web.ctx.homepath ).parent.parent )
+        if webapdirurl[-1] != '/':
+            webapdirurl += "/"
+        sys.stderr.write( f"In ResetPassword, webapdirurl is {webapdirurl}\n" )
         # response += "<link href=\"" + webapdirurl
         # response += "photodb.css\" rel=\"stylesheet\" type=\"text/css\">\n"
-        response += "<script src=\"" + webapdirurl + "/aes.js\"></src>\n"
-        response += "<script src=\"" + webapdirurl + "/jsencrypt.min.js\"></script>\n"
-        response += "<script src=\"" + webapdirurl + "/resetpasswd_start.js\" type=\"module\"></script>\n"
+        response += "<script src=\"" + webapdirurl + "aes.js\"></script>\n"
+        response += "<script src=\"" + webapdirurl + "jsencrypt.min.js\"></script>\n"
+        response += "<script src=\"" + webapdirurl + "resetpasswd_start.js\" type=\"module\"></script>\n"
         response += "</head>\n<body>\n"
         response += f"<h1>Reset Password</h1>\n<p><b>ROB Todo: make this header better</b></p>\n";
 

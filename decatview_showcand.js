@@ -27,8 +27,8 @@ ShowCandidate.filterorder = [ 'g', 'r', 'i', 'z' ];
 
 ShowCandidate.prototype.render = function() {
     rkWebUtil.wipeDiv( this.superdiv );
-    this.rbinfodiv = rkWebUtil.elemaker( "div", this.superdiv );
     this.infodiv = rkWebUtil.elemaker( "div", this.superdiv );
+    this.rbinfodiv = rkWebUtil.elemaker( "div", this.superdiv );
     this.maindiv = rkWebUtil.elemaker( "div", this.superdiv, { "classes": [ "candidateshow" ] } );
     this.tilesdiv = rkWebUtil.elemaker( "div", this.maindiv, { "classes": [ "candidatecutouts" ] } );
     this.ltcvsdiv = rkWebUtil.elemaker( "div", this.maindiv, { "classes": [ "candidateltcvs" ] } );
@@ -81,6 +81,7 @@ ShowCandidate.prototype.showTheThings = function() {
                                                     "showcandid": false,
                                                     "showfilename": true,
                                                     "showband": true,
+                                                    "showpropid": true,
                                                     "imgsize": 153 } );
     rkWebUtil.elemaker( "p", this.tilesdiv, { "text": "Loading data for candidate...",
                                               "classes": [ "warning" ] } );
@@ -91,7 +92,9 @@ ShowCandidate.prototype.showTheThings = function() {
 // **********************************************************************
 
 ShowCandidate.prototype.actuallyShowTheThings = function( data ) {
-    var p = rkWebUtil.elemaker( "p", this.infodiv, { "text": "Candidata RA: " +
+    rkWebUtil.elemaker( "h3", this.infodiv, { "text": "Candidate: " + data.objs[0].candid } );
+
+    var p = rkWebUtil.elemaker( "p", this.infodiv, { "text": "Candidate RA: " +
                                                      data['candra'].toFixed(5) +
                                                      " ; Dec: " +
                                                      data['canddec'].toFixed(5) + " — " } );
@@ -161,7 +164,8 @@ ShowCandidate.prototype.plotltcv = function( objs, band, color ) {
                                                    "x": x,
                                                    "y": y,
                                                    "dy": dy,
-                                                   "color": color } );
+                                                   "color": color,
+                                                   "linewid": 0 } );
     this.plotters[ band ].addDataset( this.datasets[ band ] );
 }
 

@@ -13,10 +13,11 @@ var CutoutList = function( div, options={} ) {
         "showband": false,
         "showrbs": true,
         "showmag": true,
-        "goodbadinterface": false,
+        "showpropid": false,
         "imgsize": 204,
         "imgclass": "img",
         "rbinfo": null,
+        "rowcallback": null,
     };
     Object.assign( this.options, options );
 }
@@ -61,6 +62,10 @@ CutoutList.prototype.render = function( cutoutdata )  {
                 else span.classList.add( "bold" );
             }
         }
+        if ( this.options.showpropid ) {
+            rkWebUtil.elemaker( "br", td );
+            rkWebUtil.elemaker( "span", td, { "text": "Proposal: " + data.proposalid } );
+        }
         rkWebUtil.elemaker( "br", td );
         rkWebUtil.elemaker( "span", td, { "text": "α: " + data.ra.toFixed(5) + "  δ: " + data.dec.toFixed(5) } );
         if ( this.options.showmag ) {
@@ -72,11 +77,10 @@ CutoutList.prototype.render = function( cutoutdata )  {
             rkWebUtil.elemaker( "br", td );
             rkWebUtil.elemaker( "span", td, { "text": "File: " + data.filename } );
         }
-        if ( this.options.showband ) {
-            rkWebUtil.elemaker( "br", td );
-            rkWebUtil.elemaker( "span", td, { "text": "Band: " + data.filter } );
-        }
         rkWebUtil.elemaker( "br", td );
+        if ( this.options.showband ) {
+            rkWebUtil.elemaker( "span", td, { "text": "Band: " + data.filter + "  " } );
+        }
         rkWebUtil.elemaker( "span", td, { "text": "ccd: " + data.ccdnum } );
         rkWebUtil.elemaker( "br", td );
         rkWebUtil.elemaker( "span", td, { "text": "Obj ID: " + data.object_id } );
@@ -95,6 +99,8 @@ CutoutList.prototype.render = function( cutoutdata )  {
                                                       "alt": img } } );
             }
         }
+
+        if ( this.options.rowcallback != null ) this.options.rowcallback( tr, data );
     }
 }
 
