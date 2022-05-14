@@ -102,7 +102,7 @@ ShowCandidate.prototype.actuallyShowTheThings = function( data ) {
                                   "classes": [ "link" ],
                                   "attributes": {
                                       "target": "_blank",
-                                      "href": "https://www.legacysurvey.org/viewer"
+                                      "href": "https://www.legacysurvey.org/viewer-desi"
                                           + "?ra=" + data['candra'].toFixed(5)
                                           + "&dec=" + data['canddec'].toFixed(5)
                                           + "&zoom=16&layer=dr8&mark="
