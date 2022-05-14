@@ -17,8 +17,7 @@ toclean = decatview_config.js decatview_config.py
 default:
 	@echo Do "make production" or "make dev"
 
-production:
-	@echo "Don't"
+production: webap webapinstall
 
 dev: webapdev webapdevinstall
 
@@ -28,7 +27,7 @@ webapdev: decatview_config_dev.js decatview_config_dev.py
 
 webap: decatview_config_production.js decatview_config_production.py
 	cp -p decatview_config_production.js decatview_config.js
-	cp -p decatview_config_production.py decatview_config_production.py
+	cp -p decatview_config_production.py decatview_config.py
 
 webapdevinstall: $(patsubst %, $(INSTALLDIR_DEV)/%, $(toinstall))
 

@@ -1,5 +1,5 @@
 var webapconfig = {
-    "webapfullurl": "http://decatdb.lbl.gov/decatview.py/",
+    "webapfullurl": "http://decat-webap.lbl.gov/decatview.py/",
     "webapurl": "/decatview.py/",
     "defaultrbtype": 2,
     "proposals": {
