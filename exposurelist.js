@@ -4,7 +4,8 @@ import { CutoutList } from "./cutoutlist.js"
 // **********************************************************************
 
 var ExposureList = function( div, startdate, enddate, rbinfo, proplist, connector ) {
-    this.div = div;
+    this.topdiv = div;
+    this.div = null;
     this.startdate = startdate;
     this.enddate = enddate
     this.rbinfo = rbinfo;
@@ -13,11 +14,28 @@ var ExposureList = function( div, startdate, enddate, rbinfo, proplist, connecto
     this.checkpointdefs = null;
 }
 
-ExposureList.prototype.render = function() {
-    rkWebUtil.wipeDiv( this.div );
+ExposureList.prototype.render = function( rerender=false ) {
+    var self = this;
 
-    let p = rkWebUtil.elemaker( "p", this.div, { "text": "Loading exposures from " +
-                                                 this.startdate + " to " + this.enddate } );
+    if ( rerender ) {
+        if ( this.div != null ) this.div.remove();
+        this.div = null;
+    }
+
+    if ( this.div != null ) {
+        this.div.remove();
+        rkWebUtil.wipeDiv( this.topdiv );
+        this.topdiv.appendChild( this.div );
+        this.div.style.display = "block";
+        return;
+    }
+
+    this.div = rkWebUtil.elemaker( "div", this.topdiv );
+    
+    let start = this.startdate.trim() == "" ? "(no limit)" : this.startdate;
+    let end = this.enddate.trim() == "" ? "(no limit)" : this.enddate;
+    let p = rkWebUtil.elemaker( "p", this.div, { "text": "Showing exposures starting: " + start +
+                                                             ", ending: " + end } );
     if ( this.proplist == null ) {
         p = rkWebUtil.elemaker( "p", this.div, { "text": "Showing exposures from ALL proposals." } );
     }
@@ -37,9 +55,14 @@ ExposureList.prototype.render = function() {
                                              " (" + this.rbinfo.description + ") ; " +
                                              "cutoff is " + this.rbinfo.rbcut } );
 
+    p = rkWebUtil.elemaker( "p", this.div, { "text": "Reload list",
+                                             "classes": [ "link" ] } );
+    p.addEventListener( "click", function() { self.render( true ) } );
+                                             
+    
     this.exposuresdiv = rkWebUtil.elemaker( "div", this.div );
     rkWebUtil.elemaker( "p", this.exposuresdiv, { "text": "Loading...", "classes": [ "warning" ] } );
-    
+
     this.showExposures( this.startdate, this.enddate, this.rbinfo.id, this.rbinfo.rbcut, this.proplist );
 }
 
@@ -112,7 +135,8 @@ ExposureList.prototype.actuallyShowExposures = function( data ) {
         button = rkWebUtil.button( td, "Show Objects", function() { self.showExposureObjects( exposure.id,
                                                                                               exposure.filename ) } );
         td = rkWebUtil.elemaker( "td", tr );
-        button = rkWebUtil.button( td, "Show Log", function() { self.showExposureLog( exposure.id ) } );
+        button = rkWebUtil.button( td, "Show Log", function() { self.showExposureLog( exposure.id,
+                                                                                      exposure.filename ) } );
         if ( exposure.numerrors > 0 ) {
             rkWebUtil.elemaker( "td", tr, { "text": exposure.numerrors + " errors", "classes": [ "bad" ] } );
         }
@@ -121,13 +145,14 @@ ExposureList.prototype.actuallyShowExposures = function( data ) {
 
 // **********************************************************************
 
-ExposureList.prototype.showExposureLog = function( exposureid ) {
+ExposureList.prototype.showExposureLog = function( exposureid, exposurename ) {
     var self = this;
-    rkWebUtil.wipeDiv( this.div );
-    rkWebUtil.elemaker( "p", this.div, { "text": "Back to exposure list",
-                                         "classes": [ "link" ],
-                                         "click": function() { self.render() } } );
-    let logdiv = rkWebUtil.elemaker( "div", this.div );
+    this.div.style.display = "none";
+    rkWebUtil.elemaker( "p", this.topdiv, { "text": "Back to exposure list",
+                                            "classes": [ "link" ],
+                                            "click": function() { self.render() } } );
+    rkWebUtil.elemaker( "h3", this.topdiv, { "text": "Exposure: " + exposurename } );
+    let logdiv = rkWebUtil.elemaker( "div", this.topdiv );
     rkWebUtil.elemaker( "p", logdiv, { "text": "Loading event log...", "classes": [ "warning" ] } );
     if ( this.checkpointdefs == null ) {
         this.connector.sendHttpRequest( "checkpointdefs", {},
@@ -247,19 +272,19 @@ ExposureList.prototype.actuallyShowExposureLog = function( data, logdiv ) {
 ExposureList.prototype.showExposureObjects = function( expid, filename ) {
     var self = this;
     this.shown_objects_expid = expid;
-    rkWebUtil.wipeDiv( this.div );
-    rkWebUtil.elemaker( "p", this.div, { "text": "Back to exposure list",
-                                         "classes": [ "link" ],
-                                         "click": function() {
-                                             delete( self.cutouts ),
-                                             self.render() } } );
-    rkWebUtil.elemaker( "h3", this.div, { "text": "Objects for " + filename } );
-    var p = rkWebUtil.elemaker( "p", this.div, { "text": "r/b type is " + this.rbinfo.id +
-                                                 " (" + this.rbinfo.description + ") ; " +
-                                                 "cutoff is " + this.rbinfo.rbcut } );
-    this.abovecutoutdiv = rkWebUtil.elemaker( "div", this.div );
-    this.cutoutdiv = rkWebUtil.elemaker( "div", this.div );
-    this.belowcutoutdiv = rkWebUtil.elemaker( "div", this.div );
+    this.div.style.display = "none";
+    rkWebUtil.elemaker( "p", this.topdiv, { "text": "Back to exposure list",
+                                            "classes": [ "link" ],
+                                            "click": function() {
+                                                delete( self.cutouts ),
+                                                self.render() } } );
+    rkWebUtil.elemaker( "h3", this.topdiv, { "text": "Objects for " + filename } );
+    var p = rkWebUtil.elemaker( "p", this.topdiv, { "text": "r/b type is " + this.rbinfo.id +
+                                                    " (" + this.rbinfo.description + ") ; " +
+                                                    "cutoff is " + this.rbinfo.rbcut } );
+    this.abovecutoutdiv = rkWebUtil.elemaker( "div", this.topdiv );
+    this.cutoutdiv = rkWebUtil.elemaker( "div", this.topdiv );
+    this.belowcutoutdiv = rkWebUtil.elemaker( "div", this.topdiv );
     rkWebUtil.elemaker( "p", this.cutoutdiv, { "text": "Loading object cutouts...",
                                                "classes": [ "warning" ] } );
     this.cutouts = new CutoutList( this.cutoutdiv, { "rbinfo": this.rbinfo } );
