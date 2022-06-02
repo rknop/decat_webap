@@ -25,24 +25,42 @@ decatview.Context.prototype.init = function() {
     this.mingallat = 0;
     this.maxgallat = 90;
     this.selectedrbtype = webapconfig.defaultrbtype;
-    this.allproposalsorsome = "all";
+    this.allproposalsorsome = "some";
     this.proposals = webapconfig.proposals;
     this.selectedproposals = webapconfig.defaultproposals;
     this.knownrbtypes = [];
     this.chosenrbtype = webapconfig.defaultrbtype;
 
-    this.limitallproposalsorsome = "all";
+    this.limitallproposalsorsome = "some";
     this.limitproposals = webapconfig.proposals;
     this.limitselectedproposals = webapconfig.defaultproposals;
     this.limits = {
         "startdate": { "value": "",
                        "use": false,
-                       "desc": "Search objects starting: ",
-                       "note": "yyyy-mm-dd hh:mm:ss" },
+                       "desc": "Search objects detected starting: ",
+                       "note": "GMT; yyyy-mm-dd or yyyy-mm-dd hh:mm:ss" },
         "enddate" : { "value": "",
                       "use": false,
-                      "desc": "Search objects ending: ",
-                      "note": "yyyy-mm-dd hh:mm:ss" },
+                      "desc": "Search objects detected ending: ",
+                      "note": "GMT; yyyy-mm-dd or yyyy-mm-dd hh:mm:ss" },
+        "sncut" : { "value": 5,
+                    "use": true,
+                    "type": "number",
+                    "min": 0.,
+                    "max": 50.,
+                    "step": 0.5,
+                    "desc": "S/N cut" },
+        "userbcut": { "value": null,
+                      "use": true,
+                      "desc": "Only high r/b objects in initial search" },
+        "startcount": { "value": "",
+                        "use": false,
+                        "desc": "Filter detection counts starting: ",
+                        "note": "GMT; yyyy-mm-dd or yyyy-mm-dd hh:mm:ss" },
+        "endcount": { "value": "",
+                      "use": false,
+                      "desc": "Filter detection counts ending: ",
+                      "note": "GMT; yyyy-mm-dd or yyyy-mm-dd hh:mm:ss" },
         "diffdays" : { "value": 3,
                        "use": false,
                        "type": "number",
@@ -64,14 +82,6 @@ decatview.Context.prototype.init = function() {
                       "max": 25.,
                       "step": 0.5,
                       "desc": "Max (dimmest) magnitude ≤" },
-        "sncut" : { "value": 5,
-                    "use": true,
-                    "type": "number",
-                    "min": 0.,
-                    "max": 50.,
-                    "step": 0.5,
-                    "desc": "S/N cut",
-                    "notes": " for counting # detections and high r/b detections" },
         "numdets" : { "value": 4,
                       "use": true,
                       "type": "number",
@@ -349,6 +359,7 @@ decatview.Context.prototype.renderExposureSearch = function( div ) {
                           rkWebUtil.wipeDiv( self.maindiv );
                           self.backToHome( self.maindiv );
                           let div = rkWebUtil.elemaker( "div", self.maindiv );
+                          self.chosenrbtype = self.rbtypewid.value;
                           let rbinfo = null;
                           for ( let rb of self.knownrbtypes ) {
                               if ( rb.id == self.chosenrbtype ) {
@@ -360,8 +371,11 @@ decatview.Context.prototype.renderExposureSearch = function( div ) {
                           if ( self.allproposalsorsome == "some" ) {
                               proplist = self.selectedproposals;
                           }
-                          self.exposurelister = new ExposureList( div, self.startdate, self.enddate,
-                                                                  rbinfo, proplist, self.connector );
+                          self.mingallat = self.mingallatwid.value;
+                          self.maxgallat = self.maxgallatwid.value;
+                          self.exposurelister = new ExposureList( div, self.startdate, self.enddate, rbinfo,
+                                                                  proplist, self.mingallat, self.maxgallat,
+                                                                  self.connector );
                           self.exposurelister.render();
                       } );
 
@@ -388,6 +402,14 @@ decatview.Context.prototype.renderCandidateSearch = function( div ) {
     
     h2 = rkWebUtil.elemaker( "h2", div, { "text": "Candidate Search" } );
 
+    rkWebUtil.elemaker( "p", div, { "text": "Note: uses selected r/b type from  'Exposure Search' above.  ROB: fix this." } );
+
+    rkWebUtil.elemaker( "p", div,
+                        { "text": "Searches for objects using the checked criteria.  First searches for objects between the " +
+                          "\"Search objects detected\" time limits, using the r/b and SN cuts if selected.  After that, it " +
+                          "looks at found objects in the \"Filter detection counts\" time limits (for things like counts " +
+                          "of objects, date range object was seen, etc.)" } );
+    
     this.proposalwid( div, "Search", "limit" );
     rkWebUtil.elemaker( "br", div );
     
@@ -413,13 +435,15 @@ decatview.Context.prototype.renderCandidateSearch = function( div ) {
             td = rkWebUtil.elemaker( "td", tr, { "classes": [ "left" ] } );
             // td.style.textAlign = "left";
         }
-        limit.wid = rkWebUtil.elemaker( "input", td, { "attributes": { "value": limit.value } } );
-        for ( let property of [ "type", "min", "max", "step", "size" ] ) {
-            if ( limit[property] != undefined ) {
-                limit.wid.setAttribute( property, limit[property] );
+        if ( limit.value != null ) {
+            limit.wid = rkWebUtil.elemaker( "input", td, { "attributes": { "value": limit.value } } );
+            for ( let property of [ "type", "min", "max", "step", "size" ] ) {
+                if ( limit[property] != undefined ) {
+                    limit.wid.setAttribute( property, limit[property] );
+                }
             }
+            limit.wid.addEventListener( "change", function() { limit.value = limit.wid.value } );
         }
-        limit.wid.addEventListener( "change", function() { limit.value = limit.wid.value } );
         if ( limit.note != undefined ) {
             if ( limit.groupprev == undefined && limit.grouphead == undefined ) {
                 td = rkWebUtil.elemaker( "td", tr, { "classes": [ "left" ] } );
@@ -438,7 +462,7 @@ decatview.Context.prototype.renderCandidateSearch = function( div ) {
 
 decatview.Context.prototype.renderVettingStart = function( div ) {
     var self = this;
-    let h2, table, tr, td;
+    let h2, table, tr, td, p;
 
     rkWebUtil.wipeDiv( div );
     h2 = rkWebUtil.elemaker( "h2", div, { "text": "Candidate Vetting" } );
@@ -450,6 +474,12 @@ decatview.Context.prototype.renderVettingStart = function( div ) {
         return;
     }
 
+    p = rkWebUtil.elemaker( "p", div, { "text": "For a description of the vetting process, and examples of " +
+                                        "\"good\" and \"bad\" candidates, please see " } );
+    rkWebUtil.elemaker( "a", p, { "text": "\"Vetting detections on subtractions\"",
+                                  "classes": [ "link" ],
+                                  "attributes": { "href": "../vetting.html" } } );
+    
     table = rkWebUtil.elemaker( "table", div, { "classes" : [ "candsearchparams" ] } );
     tr = rkWebUtil.elemaker( "tr", table );
     td = rkWebUtil.elemaker( "td", tr, { "text": "Type of field:" } );
@@ -585,7 +615,11 @@ decatview.Context.prototype.ingestAndShowCands = function( data ) {
               'minmjd': row.minmjd,
               'deltat': row.maxmjd-row.minmjd,
               'minmag': row.minmag,
-              'maxmag': row.maxmag }
+              'maxmag': row.maxmag,
+              'totnumobjs': row.totnumobjs,
+              'totdeltat': row.totmaxmjd - row.totminmjd,
+              'totminmag': row.totminmag,
+              'totmaxmag': row.totmaxmag }
         );
     }
 
@@ -599,15 +633,35 @@ decatview.Context.prototype.showCands = function() {
     table = rkWebUtil.elemaker( "table", this.candsearchdiv, { "classes": [ "candlist" ] } );
 
     tr = rkWebUtil.elemaker( "tr", table );
-    for ( let hdr of [ "Candidate", "N.Objs", "N≥SNcut", "N.rb≥cut", "N.filters",
-                       "Min MJD", "Δt", "Min Mag", "Max Mag" ] ) {
-        rkWebUtil.elemaker( "th", tr, { "text": hdr } );
+    rkWebUtil.elemaker( "th", tr );
+    rkWebUtil.elemaker( "th", tr, { "text": "Within selected dates",
+                                    "attributes": { "colspan": 8 } } );
+    rkWebUtil.elemaker( "th", tr, { "text": "Overall",
+                                    "classes": [ "borderleft" ],
+                                    "attributes": { "colspan": 7 } } );
+    tr = rkWebUtil.elemaker( "tr", table );
+    let first = true;
+    for ( let hdr of [ "Candidate",
+                       "N.Objs", "N≥SNcut", "N.rb≥cut", "N.filters", "Min MJD", "Δt", "Min Mag", "Max Mag",
+                       "N.Objs", "Δt", "Min Mag", "Max Mag",
+                     ] ) {
+        let stuff = { "text": hdr };
+        if ( hdr == "N.Objs") {
+            if ( first ) first = false;
+            else stuff["classes"] = [ "borderleft" ];
+        }
+        rkWebUtil.elemaker( "th", tr, stuff );
     }
 
     var decimals = { 'minmjd': 4,
                      'deltat': 4,
                      'minmag': 2,
-                     'maxmag': 2 }
+                     'maxmag': 2,
+                     'totdeltat': 4,
+                     'totminmag': 2,
+                     'totmaxmag': 2
+                   }
+    console.log( "this.showcandsrows.length = " + this.showcandsrows.length );
     for ( let row of this.showcandsrows ) {
         tr = rkWebUtil.elemaker( "tr", table );
         td = rkWebUtil.elemaker( "td", tr );
@@ -617,12 +671,14 @@ decatview.Context.prototype.showCands = function() {
                                            "classes": [ "link" ],
                                            "attributes": { "href": href, "target": "_blank" } } );
         for ( let prop of [ "numobjs", "numhighsn", "numhighrb", "numfilt",
-                            "minmjd", "deltat", "minmag", "maxmag" ] ) {
+                            "minmjd", "deltat", "minmag", "maxmag",
+                            "totnumobjs", "totdeltat", "totminmag", "totmaxmag" ] ) {
+            let stuff = { "text": row[prop] };
             if ( decimals.hasOwnProperty( prop ) ) {
-                td = rkWebUtil.elemaker( "td", tr, { "text": row[prop].toFixed( decimals[prop] ) } );
-            } else {
-                td = rkWebUtil.elemaker( "td", tr, { "text": row[prop] } );
+                stuff = { "text": row[prop].toFixed( decimals[prop] ) };
             }
+            if ( prop == "totnumobjs" ) stuff["classes"] = [ "borderleft" ];
+            td = rkWebUtil.elemaker( "td", tr, stuff );
         }
     }
 

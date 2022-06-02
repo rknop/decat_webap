@@ -245,7 +245,13 @@ rkWebUtil.Connector.prototype.sendHttpRequestMultipartForm = function( appcomman
 rkWebUtil.Connector.prototype.catchHttpResponse = function( req, handler, errorhandler = null )
 {
     if ( ! this.waitForJSONResponse( req, errorhandler ) ) return;
-    var statedata = JSON.parse( req.responseText );
+    try {
+        var statedata = JSON.parse( req.responseText );
+    } catch (err) {
+        window.alert( "Error parsing JSON! (" + err + ")" );
+        console.trace();
+        console.log( req.responseText );
+    }
     if ( statedata.hasOwnProperty( "error" ) ) {
         if ( errorhandler != null ) {
             errorhandler( statedata );

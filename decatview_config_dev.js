@@ -10,7 +10,7 @@ var webapconfig = {
         "2021A-0275": "2021A-0275: Rest YSE",
         "2020B-0053": "2020B-0053: Brount DEBASS "
     },
-    "defaultproposals": [ "2022A-724693" ],
+    "defaultproposals": [ "2022A-724693", "2022A-388025" ],
 
     "vetdefaultgalexgal": "Galactic",       // "Galactic" or "Extragalactic"
     "vetdefaultshowothers": "No",           // "Yes" or "No"

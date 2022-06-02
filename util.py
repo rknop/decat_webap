@@ -27,7 +27,7 @@ def asDateTime( string ):
         if isinstance( string, datetime ):
             return string
         string = string.strip()
-        sys.stderr.write( f'Looking at "{string}" with length {len(string)}\n' )
+        # sys.stderr.write( f'Looking at "{string}" with length {len(string)}\n' )
         if len(string) == 0:
             return None
         dateval = dateutil.parser.parse( string )

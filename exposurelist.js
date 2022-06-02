@@ -3,13 +3,15 @@ import { CutoutList } from "./cutoutlist.js"
 
 // **********************************************************************
 
-var ExposureList = function( div, startdate, enddate, rbinfo, proplist, connector ) {
+var ExposureList = function( div, startdate, enddate, rbinfo, proplist, mingallat, maxgallat, connector ) {
     this.topdiv = div;
     this.div = null;
     this.startdate = startdate;
     this.enddate = enddate
     this.rbinfo = rbinfo;
     this.proplist = proplist;
+    this.mingallat = mingallat;
+    this.maxgallat = maxgallat;
     this.connector = connector;
     this.checkpointdefs = null;
 }
@@ -80,6 +82,8 @@ ExposureList.prototype.showExposures = function( t0text, t1text, rb, rbcut, prop
                                       "t1": t1text,
                                       "rbtype": rb,
                                       "rbcut": rbcut,
+                                      "mingallat": this.mingallat,
+                                      "maxgallat": this.maxgallat,
                                       "allorsomeprops": this.proplist == null ? "all" : "some",
                                       "props": props },
                                     function(data) { self.actuallyShowExposures( data ) } );
@@ -200,7 +204,7 @@ ExposureList.prototype.actuallyShowExposureLog = function( data, logdiv ) {
     var hasinfos = new Set();
     var nodes = new Set();
     var minccdnum = 1;          // ROB!  Get this from camera database
-    var maxccdnum = -1;
+    var maxccdnum = 1;
     
     for ( let event of data["checkpoints"] ) {
         if ( event.ccdnum > maxccdnum ) maxccdnum = event.ccdnum;
