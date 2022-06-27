@@ -30,16 +30,31 @@ def logerr( cls, e ):
 class HandlerBase:
     def __init__( self ):
         self.response = ""
-        self.db = db.DB.get()
+        self.db = None
 
     def __del__( self ):
-        self.db.close()
+        self.closedb()
+
+    def opendb( self ):
+        self.closedb()
+        self.db = db.DB.get()
+
+    def closedb( self ):
+        if self.db is not None:
+            self.db.close()
+        self.db = None
         
     def GET( self, *args, **kwargs ):
-        return self.do_the_things( *args, **kwargs )
+        self.opendb()
+        retval= self.do_the_things( *args, **kwargs )
+        self.closedb()
+        return retval
 
     def POST( self, *args, **kwargs ):
-        return self.do_the_things( *args, **kwargs )
+        self.opendb()
+        retval = self.do_the_things( *args, **kwargs )
+        self.closedb()
+        return retval
 
     def verifyauth( self ):
         if ( not hasattr( web.ctx.session, "authenticated" ) ) or ( not web.ctx.session.authenticated ):

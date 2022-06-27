@@ -14,6 +14,7 @@ ShowCandidate.init_interval = window.setInterval(
                 window.clearInterval( ShowCandidate.init_interval );
                 let candelem = document.getElementById( "showcand_candid" );
                 let rbtypeelem = document.getElementById( "rbtype" );
+                let rbtype;
                 if ( rbtypeelem.value == "None" ) rbtype = null;
                 else rbtype = parseInt( rbtypeelem.value );
                 let div = document.getElementById( "main-div" );

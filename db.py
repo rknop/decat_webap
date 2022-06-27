@@ -8,6 +8,7 @@ import sqlalchemy as sa
 import sqlalchemy.orm
 import sqlalchemy.ext.automap
 import sqlalchemy.inspection
+import sqlalchemy.pool
 from sqlalchemy.dialects.postgresql import UUID as sqlUUID
 
 scriptdir = str( pathlib.Path( __file__ ).parent )
@@ -78,7 +79,7 @@ class DB(object):
             if not cls._dbparamsset:
                 cls.setdbparams()
             cls._engine = sa.create_engine(f'postgresql://{cls._user}:{cls._password}@{cls._host}:{cls._port}'
-                                           f'/{cls._database}')
+                                           f'/{cls._database}', poolclass=sqlalchemy.pool.NullPool )
             Base.prepare( cls._engine, reflect=True, name_for_collection_relationship=cls.collectionname )
             cls.sessionfac = sa.orm.sessionmaker( bind=cls._engine, expire_on_commit=False )
 
