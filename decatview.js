@@ -24,12 +24,14 @@ decatview.Context.prototype.init = function() {
     // Some hardcoded defaults
     this.mingallat = 0;
     this.maxgallat = 90;
-    this.selectedrbtype = webapconfig.defaultrbtype;
+    this.selectedrbtype_exgal = webapconfig.defaultrbtype_exgal;
+    this.selectedrbtype_gal = webapconfig.defaultrbtype_gal;
     this.allproposalsorsome = "some";
     this.proposals = webapconfig.proposals;
     this.selectedproposals = webapconfig.defaultproposals;
     this.knownrbtypes = [];
-    this.chosenrbtype = webapconfig.defaultrbtype;
+    this.chosenrbtype_exgal = webapconfig.defaultrbtype_exgal;
+    this.chosenrbtype_gal = webapconfig.defaultrbtype_gal;
 
     this.limitallproposalsorsome = "some";
     this.limitproposals = webapconfig.proposals;
@@ -345,9 +347,11 @@ decatview.Context.prototype.renderExposureSearch = function( div ) {
                                                               "value": this.maxgallat } } );
     p.appendChild( document.createTextNode( "°" ) );
 
-    p = rkWebUtil.elemaker( "p", div, { "text": "Use real/bogus type: " } );
-    this.rbtypewid = rkWebUtil.elemaker( "select", p, );
-    this.connector.sendHttpRequest( "getrbtypes", {}, function( data ) { self.populateRbTypeWid( data ) } );
+    p = rkWebUtil.elemaker( "p", div, { "text": "Use real/bogus type: for b<20°: " } );
+    this.rbtypewid_gal = rkWebUtil.elemaker( "select", p, );
+    rkWebUtil.elemaker( "span", p, { "text": "; for b≥20°: " } );
+    this.rbtypewid_exgal = rkWebUtil.elemaker( "select", p, );
+    this.connector.sendHttpRequest( "getrbtypes", {}, function( data ) { self.populateRbTypeWids( data ) } );
                                          
     this.proposalwid( div, "Include", "" );
 
@@ -359,12 +363,13 @@ decatview.Context.prototype.renderExposureSearch = function( div ) {
                           rkWebUtil.wipeDiv( self.maindiv );
                           self.backToHome( self.maindiv );
                           let div = rkWebUtil.elemaker( "div", self.maindiv );
-                          self.chosenrbtype = self.rbtypewid.value;
-                          let rbinfo = null;
-                          for ( let rb of self.knownrbtypes ) {
-                              if ( rb.id == self.chosenrbtype ) {
-                                  rbinfo = rb;
-                                  break;
+                          let rbinfo = { "gal": null, "exgal": null };
+                          for ( let which of [ "gal", "exgal" ] ) {
+                              self["chosenrbtype_"+which] = self["rbtypewid_"+which].value;
+                              for ( let rb of self.knownrbtypes ) {
+                                  if ( rb.id == self["chosenrbtype_"+which] ) {
+                                      rbinfo[which] = rb;
+                                  }
                               }
                           }
                           let proplist = null;
@@ -524,24 +529,28 @@ decatview.Context.prototype.renderVettingStart = function( div ) {
 // **********************************************************************
 // Populate r/b type widget
 
-decatview.Context.prototype.populateRbTypeWid = function( data ) {
+decatview.Context.prototype.populateRbTypeWids = function( data ) {
     var self = this;
     
     if ( data.hasOwnProperty( "error" ) ) {
         window.alert( data["error"] );
         return;
     }
-    rkWebUtil.wipeDiv( this.rbtypewid );
     this.knownrbtypes = data["rbtypes"];
-    for ( let rbinfo of this.knownrbtypes ) {
-        let option = rkWebUtil.elemaker( "option", this.rbtypewid,
-                                         { "attributes": { "value": rbinfo.id },
-                                           "text": rbinfo.id + " — " + rbinfo.description } );
-        if ( rbinfo.id == this.chosenrbtype ) {
-            option.setAttribute( "selected", "selected" );
+    for ( let which of [ "gal", "exgal" ] ) {
+        rkWebUtil.wipeDiv( this["rbtypewid_" + which] );
+        for ( let rbinfo of this.knownrbtypes ) {
+            let option = rkWebUtil.elemaker( "option", this["rbtypewid_" + which],
+                                             { "attributes": { "value": rbinfo.id },
+                                               "text": rbinfo.id + " — " + rbinfo.description } );
+            if ( rbinfo.id == this["chosenrbtype_" + which] ) {
+                option.setAttribute( "selected", "selected" );
+            }
         }
+        this["rbtypewid_"+which].addEventListener( "change",
+                                                   function()
+                                                   { self["chosenrbtype_"+which] = self["rbtypewid_"+which].value } );
     }
-    this.rbtypewid.addEventListener( "change", function() { this.chosenrbtype = self.rbtypewid.value } );
 }
 
 // **********************************************************************

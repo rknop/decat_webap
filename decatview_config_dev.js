@@ -1,7 +1,8 @@
 var webapconfig = {
     "webapfullurl": "http://decat-webap.decat-webap.development.svc.spin.nersc.org/decatview.py/",
     "webapurl": "/decatview.py/",
-    "defaultrbtype": 2,
+    "defaultrbtype_exgal": 2,
+    "defaultrbtype_gal": 1,
     "proposals": {
         "2021A-0113": "2021A-0113: Graham DDF Spring 2021",
         "2021B-0149": "2021B-0149: Graham DDF Fall 2021",

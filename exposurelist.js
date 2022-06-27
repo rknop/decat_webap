@@ -53,9 +53,14 @@ ExposureList.prototype.render = function( rerender=false ) {
         p.appendChild( document.createTextNode( text ) );
     }
 
-    p = rkWebUtil.elemaker( "p", this.div, { "text": "r/b type is " + this.rbinfo.id +
-                                             " (" + this.rbinfo.description + ") ; " +
-                                             "cutoff is " + this.rbinfo.rbcut } );
+    p = rkWebUtil.elemaker( "p", this.div );
+    rkWebUtil.elemaker( "span", p, { "text": "For galactic fields, r/b type is " + this.rbinfo.gal.id +
+                                     " (" + this.rbinfo.gal.description + ") ; " +
+                                     "cutoff is " + this.rbinfo.gal.rbcut } );
+    rkWebUtil.elemaker( "br", p );
+    rkWebUtil.elemaker( "span", p, { "text": "For extragalactic fields, r/b type is " + this.rbinfo.exgal.id +
+                                     " (" + this.rbinfo.exgal.description + ") ; " +
+                                     "cutoff is " + this.rbinfo.exgal.rbcut } );
 
     p = rkWebUtil.elemaker( "p", this.div, { "text": "Reload list",
                                              "classes": [ "link" ] } );
@@ -65,7 +70,7 @@ ExposureList.prototype.render = function( rerender=false ) {
     this.exposuresdiv = rkWebUtil.elemaker( "div", this.div );
     rkWebUtil.elemaker( "p", this.exposuresdiv, { "text": "Loading...", "classes": [ "warning" ] } );
 
-    this.showExposures( this.startdate, this.enddate, this.rbinfo.id, this.rbinfo.rbcut, this.proplist );
+    this.showExposures( this.startdate, this.enddate, this.proplist );
 }
 
 // **********************************************************************
@@ -75,13 +80,13 @@ ExposureList.prototype.render = function( rerender=false ) {
 //  information is in the database that the server has.  I did it
 //  because I was being lazy about constructing my queries server side.
 
-ExposureList.prototype.showExposures = function( t0text, t1text, rb, rbcut, props ) {
+ExposureList.prototype.showExposures = function( t0text, t1text, props ) {
     var self = this;
     this.connector.sendHttpRequest( "findexposures",
                                     { "t0": t0text,
                                       "t1": t1text,
-                                      "rbtype": rb,
-                                      "rbcut": rbcut,
+                                      "rbtypes": [ this.rbinfo.gal.id, this.rbinfo.exgal.id ],
+                                      "rbcuts": [ this.rbinfo.gal.rbcut, this.rbinfo.exgal.rbcut ],
                                       "mingallat": this.mingallat,
                                       "maxgallat": this.maxgallat,
                                       "allorsomeprops": this.proplist == null ? "all" : "some",
@@ -134,10 +139,15 @@ ExposureList.prototype.actuallyShowExposures = function( data ) {
         rkWebUtil.elemaker( "td", tr, { "text": exposure.numsubs } );
         rkWebUtil.elemaker( "td", tr, { "text": exposure.numdone } );
         rkWebUtil.elemaker( "td", tr, { "text": exposure.numobjs } );
-        rkWebUtil.elemaker( "td", tr, { "text": exposure.numhighrbobjs } );
+        let rbid = ( Math.abs(exposure.gallat)>=20 ? this.rbinfo.exgal.id : this.rbinfo.gal.id );
+        let rbtag = ( Math.abs(exposure.gallat)>=20 ? "exgal" : "gal" );
+        let rbprop = "numhighrb" + rbid;
+        let rbcount = ( exposure.hasOwnProperty(rbprop) ? exposure[rbprop] : 0 )
+        rkWebUtil.elemaker( "td", tr, { "text": rbcount } );
         td = rkWebUtil.elemaker( "td", tr );
         button = rkWebUtil.button( td, "Show Objects", function() { self.showExposureObjects( exposure.id,
-                                                                                              exposure.filename ) } );
+                                                                                              exposure.filename,
+                                                                                              rbtag ) } );
         td = rkWebUtil.elemaker( "td", tr );
         button = rkWebUtil.button( td, "Show Log", function() { self.showExposureLog( exposure.id,
                                                                                       exposure.filename ) } );
@@ -273,8 +283,9 @@ ExposureList.prototype.actuallyShowExposureLog = function( data, logdiv ) {
 // **********************************************************************
 // I should probably make this into its own class
 
-ExposureList.prototype.showExposureObjects = function( expid, filename ) {
+ExposureList.prototype.showExposureObjects = function( expid, filename, rbtag ) {
     var self = this;
+    var rbinfo = this.rbinfo[rbtag];
     this.shown_objects_expid = expid;
     this.div.style.display = "none";
     rkWebUtil.elemaker( "p", this.topdiv, { "text": "Back to exposure list",
@@ -283,27 +294,27 @@ ExposureList.prototype.showExposureObjects = function( expid, filename ) {
                                                 delete( self.cutouts ),
                                                 self.render() } } );
     rkWebUtil.elemaker( "h3", this.topdiv, { "text": "Objects for " + filename } );
-    var p = rkWebUtil.elemaker( "p", this.topdiv, { "text": "r/b type is " + this.rbinfo.id +
-                                                    " (" + this.rbinfo.description + ") ; " +
-                                                    "cutoff is " + this.rbinfo.rbcut } );
+    var p = rkWebUtil.elemaker( "p", this.topdiv, { "text": "r/b type is " + rbinfo.id +
+                                                    " (" + rbinfo.description + ") ; " +
+                                                    "cutoff is " + rbinfo.rbcut } );
     this.abovecutoutdiv = rkWebUtil.elemaker( "div", this.topdiv );
     this.cutoutdiv = rkWebUtil.elemaker( "div", this.topdiv );
     this.belowcutoutdiv = rkWebUtil.elemaker( "div", this.topdiv );
     rkWebUtil.elemaker( "p", this.cutoutdiv, { "text": "Loading object cutouts...",
                                                "classes": [ "warning" ] } );
-    this.cutouts = new CutoutList( this.cutoutdiv, { "rbinfo": this.rbinfo } );
+    this.cutouts = new CutoutList( this.cutoutdiv, { "rbinfo": rbinfo } );
     this.connector.sendHttpRequest( "cutoutsforexp/" + this.shown_objects_expid,
-                                    { "rbtype": this.rbinfo.id,
+                                    { "rbtype": rbinfo.id,
                                       "offset": 0,
                                       "limit": 100 },
                                     function( data ) {
-                                        self.renderExposureObjects( data )
+                                        self.renderExposureObjects( data, rbinfo )
                                     } );
 }
 
 // **********************************************************************
 
-ExposureList.prototype.renderExposureObjects = function( data ) {
+ExposureList.prototype.renderExposureObjects = function( data, rbinfo ) {
     var self = this;
     rkWebUtil.wipeDiv( this.abovecutoutdiv );
     rkWebUtil.wipeDiv( this.belowcutoutdiv );
@@ -318,7 +329,7 @@ ExposureList.prototype.renderExposureObjects = function( data ) {
         rkWebUtil.wipeDiv( self.cutoutdiv );
         rkWebUtil.elemaker( "p", self.cutoutdiv, { "text": "Loading object cutouts...",
                                                    "classes": [ "warning" ] } );
-        self.renderExposureObjects( data )
+        self.renderExposureObjects( data, rbinfo )
     }
     
     for ( let div of [ this.abovecutoutdiv, this.belowcutoutdiv ] ) {
@@ -327,7 +338,7 @@ ExposureList.prototype.renderExposureObjects = function( data ) {
                               function() {
                                   self.connector.sendHttpRequest(
                                       "cutoutsforexp/" + self.shown_objects_expid,
-                                      { "rbtype": self.rbinfo.id,
+                                      { "rbtype": rbinfo.id,
                                         "offset": data.offset + 100,
                                         "limit": 100 },
                                       handlereq ) } );
@@ -340,7 +351,7 @@ ExposureList.prototype.renderExposureObjects = function( data ) {
                               function() {
                                   self.connector.sendHttpRequest(
                                       "cutoutsforexp/" + self.shown_objects_expid,
-                                      { "rbtype": self.rbinfo.id,
+                                      { "rbtype": rbinfo.id,
                                         "offset": prevoff,
                                         "limit": 100 },
                                       handlereq ) } );
@@ -350,7 +361,7 @@ ExposureList.prototype.renderExposureObjects = function( data ) {
                                   function() {
                                       self.connector.sendHttpRequest(
                                           "cutoutsforexp/" + self.shown_objects_expid,
-                                          { "rbtype": self.rbinfo.id,
+                                          { "rbtype": rbinfo.id,
                                             "offset": 0,
                                             "limit": 100 },
                                           handlereq ) } );

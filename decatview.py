@@ -9,6 +9,7 @@ import traceback
 import base64
 
 import sqlalchemy as sa
+import psycopg2.extras
 
 rundir = pathlib.Path(__file__).parent
 if not str(rundir) in sys.path:
@@ -153,64 +154,154 @@ class FindExposures(HandlerBase):
     
     def do_the_things( self ):
         try:
+            conn = db.DB._engine.raw_connection()
+
             self.jsontop()
             data = json.loads( web.data() )
             t0 = util.asDateTime( data['t0'] )
             t1 = util.asDateTime( data['t1'] )
-            errorchk = sa.orm.aliased( db.ProcessCheckpoint )
-            donechk = sa.orm.aliased( db.ProcessCheckpoint )
-            q = self.db.db.query( db.Exposure, sa.func.count(sa.distinct(db.Subtraction.id)),
-                                  sa.func.count(sa.distinct(errorchk.id)),
-                                  sa.func.count(sa.distinct(db.Object.id)),
-                                  sa.func.count(sa.distinct(db.ObjectRB.id)),
-                                  sa.func.count(sa.distinct(donechk.id)) )
-            q = q.join( db.Subtraction, db.Exposure.id==db.Subtraction.exposure_id, isouter=True )
-            q = q.join( errorchk, sa.and_( db.Exposure.id==errorchk.exposure_id,
-                                           errorchk.event_id==self.checkpointerrorvalue ),
-                        isouter=True )
-            q = q.join( donechk, sa.and_( db.Exposure.id==donechk.exposure_id,
-                                          donechk.event_id==self.checkpointdonevalue ),
-                        isouter=True )
-            q = q.join( db.Object, db.Subtraction.id==db.Object.subtraction_id, isouter=True )
-            q = q.join( db.ObjectRB, sa.and_( db.ObjectRB.object_id==db.Object.id,
-                                              db.ObjectRB.rbtype_id==data['rbtype'],
-                                              db.ObjectRB.rb>=data['rbcut'] ), isouter=True )
+
+            sql = ( "SELECT e.id AS id,e.filename AS filename,e.filter AS filter,e.proposalid AS proposalid,"
+                    "e.header->'EXPTIME' AS exptime,e.ra AS ra,e.dec AS dec,e.gallat AS gallat,"
+                    "e.gallong AS gallong,COUNT(DISTINCT s.id) AS numsubs,COUNT(o.id) AS numobjs "
+                    "INTO TEMP TABLE temp_find_exposures "
+                    "FROM exposures e "
+                    "LEFT JOIN subtractions s ON e.id=s.exposure_id "
+                    "LEFT JOIN objects o ON o.subtraction_id=s.id " )
+            clauses = []
+            subs = {}
             if t0 is not None:
-                q = q.filter( db.Exposure.mjd >= util.mjd( t0.year, t0.month, t0.day, t0.hour, t0.minute, t0.second ) )
+                clauses.append( f"e.mjd >= {util.mjd( t0.year, t0.month, t0.day, t0.hour, t0.minute, t0.second )}" )
             if t1 is not None:
-                q = q.filter( db.Exposure.mjd <= util.mjd( t1.year, t1.month, t1.day, t1.hour, t1.minute, t1.second ) )
-            if ( data['maxgallat'] is not None ) and ( float(data['maxgallat']) < 90 ):
-                q = q.filter( sa.and_( db.Exposure.gallat <= float(data['maxgallat']),
-                                       db.Exposure.gallat >= -float(data['maxgallat']) ) )
-            if ( data['mingallat'] is not None ) and ( float(data['mingallat']) > 0 ):
-                q = q.filter( sa.or_( db.Exposure.gallat >= float(data['mingallat']),
-                                      db.Exposure.gallat <= -float(data['mingallat']) ) );
-            if data['allorsomeprops'] != 'all':
-                q = q.filter( db.Exposure.proposalid.in_( data['props'] ) )
-            q = q.group_by( db.Exposure )
-            q = q.order_by( db.Exposure.mjd )
-            res = q.all()
-            exps = []
-            for row in res:
-                exposure = row[0]
-                exps.append( { 'id': exposure.id,
-                               'filename': exposure.filename,
-                               'filter': exposure.filter,
-                               'proposalid': exposure.proposalid,
-                               'exptime': exposure.header['EXPTIME'],
-                               'ra': exposure.ra,
-                               'dec': exposure.dec,
-                               'gallat': exposure.gallat,
-                               'gallong': exposure.gallong,
-                               'numsubs': row[1],
-                               'numerrors': row[2],
-                               'numobjs': row[3],
-                               'numhighrbobjs': row[4],
-                               'numdone': row[5] } )
+                clauses.append( f"e.mjd <= {util.mjd( t1.year, t1.month, t1.day, t1.hour, t1.minute, t1.second )}" )
+            if data['maxgallat'] is not None and ( float(data['maxgallat']) < 90 ):
+                clauses.append( "(e.gallat <= %(maxgallat)s AND e.gallat >= %(negmaxgallats)) " )
+                subs['maxgallat'] = float(data['maxgallat'])
+                subs['negmaxgallat'] = -float(data['maxgallat'])
+            if data['mingallat'] is not None and ( float(data['mingallat']) > 0. ):
+                clauses.append( "(e.gallat >= %(mingallat)s OR e.gallat <= %(negmingallat)s) " )
+                subs['mingallat'] = float(data['mingallat'])
+                subs['negmingallat'] = -float(data['mingallat'])
+            if data['allorsomeprops'] != all:
+                clauses.append( "proposalid IN %(props)s" )
+                subs['props'] = tuple( data['props'] )
+            if len(clauses) > 0:
+                sql += "WHERE " + " AND ".join(clauses)
+            sql += " GROUP BY e.id,e.filename,e.filter,e.proposalid,e.header,e.ra,e.dec,e.gallat,e.gallong "
+            sql += "ORDER BY e.mjd"
+
+            cursor = conn.cursor( cursor_factory=psycopg2.extras.DictCursor )
+            cursor.execute( sql, subs )
+            cursor.execute( "SELECT * FROM temp_find_exposures" )
+            rows = cursor.fetchall()
+            # I'm going to depend on dictionaries being ordered here
+            exposures = {}
+            for row in rows:
+                exposures[row['id']] = dict(row)
+                exposures[row['id']]['numdone'] = 0
+                exposures[row['id']]['numerrors'] = 0
+
+            sql = ( "SELECT e.id AS id,COUNT(p.id) AS numdone "
+                    "FROM temp_find_exposures e "
+                    "INNER JOIN processcheckpoints p ON p.exposure_id=e.id "
+                    "WHERE p.event_id=%(donevalue)s "
+                    "GROUP BY e.id")
+            subs = { 'donevalue': self.checkpointdonevalue }
+            cursor = conn.cursor( cursor_factory=psycopg2.extras.DictCursor )
+            cursor.execute( sql, subs )
+            rows = cursor.fetchall()
+            for row in rows:
+                exposures[row['id']]['numdone'] = row['numdone']
+
+            sql = ( "SELECT e.id AS id,COUNT(p.id) AS numerrors "
+                    "FROM temp_find_exposures e "
+                    "INNER JOIN processcheckpoints p ON p.exposure_id=e.id "
+                    "WHERE p.event_id=%(errorvalue)s "
+                    "GROUP BY e.id" )
+            subs = { 'errorvalue': self.checkpointerrorvalue }
+            cursor = conn.cursor( cursor_factory=psycopg2.extras.DictCursor )
+            cursor.execute( sql, subs )
+            rows = cursor.fetchall()
+            for row in rows:
+                exposures[row['id']]['numerrors'] = row['numerrors']
+
+            for rbtype, rbcut in zip( data['rbtypes'], data['rbcuts'] ):
+                sql = ( "SELECT e.id AS id,COUNT(o.id) AS numhighrb "
+                        "FROM temp_find_exposures e "
+                        "INNER JOIN subtractions s ON e.id=s.exposure_id "
+                        "INNER JOIN objects o ON s.id=o.subtraction_id "
+                        "INNER JOIN objectrbs r ON o.id=r.object_id "
+                        "WHERE r.rbtype_id=%(rbtype)s AND r.rb>%(rbcut)s "
+                        "GROUP BY e.id" )
+                subs = { 'rbtype': rbtype, 'rbcut': rbcut }
+                sys.stderr.write( f"Sending query: {sql}\n" )
+                sys.stderr.write( f"Subs: {subs}\n" )
+                cursor = conn.cursor( cursor_factory=psycopg2.extras.DictCursor )
+                cursor.execute( sql, subs )
+                rows = cursor.fetchall()
+                sys.stderr.write( f"Got {len(rows)} results\n" )
+                for row in rows:
+                    exposures[row['id']][f"numhighrb{rbtype}"] = row['numhighrb']
+
             return json.dumps( { "status": "ok",
-                                 "exposures": exps } )
+                                 "exposures": [ val for key, val in exposures.items() ] } )
+
+            # errorchk = sa.orm.aliased( db.ProcessCheckpoint )
+            # donechk = sa.orm.aliased( db.ProcessCheckpoint )
+            # q = self.db.db.query( db.Exposure, sa.func.count(sa.distinct(db.Subtraction.id)),
+            #                       sa.func.count(sa.distinct(errorchk.id)),
+            #                       sa.func.count(sa.distinct(db.Object.id)),
+            #                       sa.func.count(sa.distinct(db.ObjectRB.id)),
+            #                       sa.func.count(sa.distinct(donechk.id)) )
+            # q = q.join( db.Subtraction, db.Exposure.id==db.Subtraction.exposure_id, isouter=True )
+            # q = q.join( errorchk, sa.and_( db.Exposure.id==errorchk.exposure_id,
+            #                                errorchk.event_id==self.checkpointerrorvalue ),
+            #             isouter=True )
+            # q = q.join( donechk, sa.and_( db.Exposure.id==donechk.exposure_id,
+            #                               donechk.event_id==self.checkpointdonevalue ),
+            #             isouter=True )
+            # q = q.join( db.Object, db.Subtraction.id==db.Object.subtraction_id, isouter=True )
+            # q = q.join( db.ObjectRB, sa.and_( db.ObjectRB.object_id==db.Object.id,
+            #                                   db.ObjectRB.rbtype_id==data['rbtype'],
+            #                                   db.ObjectRB.rb>=data['rbcut'] ), isouter=True )
+            # if t0 is not None:
+            #     q = q.filter( db.Exposure.mjd >= util.mjd( t0.year, t0.month, t0.day, t0.hour, t0.minute, t0.second ) )
+            # if t1 is not None:
+            #     q = q.filter( db.Exposure.mjd <= util.mjd( t1.year, t1.month, t1.day, t1.hour, t1.minute, t1.second ) )
+            # if ( data['maxgallat'] is not None ) and ( float(data['maxgallat']) < 90 ):
+            #     q = q.filter( sa.and_( db.Exposure.gallat <= float(data['maxgallat']),
+            #                            db.Exposure.gallat >= -float(data['maxgallat']) ) )
+            # if ( data['mingallat'] is not None ) and ( float(data['mingallat']) > 0 ):
+            #     q = q.filter( sa.or_( db.Exposure.gallat >= float(data['mingallat']),
+            #                           db.Exposure.gallat <= -float(data['mingallat']) ) );
+            # if data['allorsomeprops'] != 'all':
+            #     q = q.filter( db.Exposure.proposalid.in_( data['props'] ) )
+            # q = q.group_by( db.Exposure )
+            # q = q.order_by( db.Exposure.mjd )
+            # res = q.all()
+            # exps = []
+            # for row in res:
+            #     exposure = row[0]
+            #     exps.append( { 'id': exposure.id,
+            #                    'filename': exposure.filename,
+            #                    'filter': exposure.filter,
+            #                    'proposalid': exposure.proposalid,
+            #                    'exptime': exposure.header['EXPTIME'],
+            #                    'ra': exposure.ra,
+            #                    'dec': exposure.dec,
+            #                    'gallat': exposure.gallat,
+            #                    'gallong': exposure.gallong,
+            #                    'numsubs': row[1],
+            #                    'numerrors': row[2],
+            #                    'numobjs': row[3],
+            #                    'numhighrbobjs': row[4],
+            #                    'numdone': row[5] } )
+            # return json.dumps( { "status": "ok",
+            #                      "exposures": exps } )
         except Exception as e:
             return logerr( self.__class__, e )
+        finally:
+            conn.close()
 
 # ======================================================================
 
