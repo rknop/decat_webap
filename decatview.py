@@ -3,6 +3,7 @@ import os
 import io
 import pathlib
 import math
+import numbers
 import web
 import json
 import traceback
@@ -231,7 +232,7 @@ class FindExposures(HandlerBase):
                         "INNER JOIN subtractions s ON e.id=s.exposure_id "
                         "INNER JOIN objects o ON s.id=o.subtraction_id "
                         "INNER JOIN objectrbs r ON o.id=r.object_id "
-                        "WHERE r.rbtype_id=%(rbtype)s AND r.rb>%(rbcut)s "
+                        "WHERE r.rbtype_id=%(rbtype)s AND r.rb>=%(rbcut)s "
                         "GROUP BY e.id" )
                 subs = { 'rbtype': rbtype, 'rbcut': rbcut }
                 sys.stderr.write( f"Sending query: {sql}\n" )
@@ -490,6 +491,9 @@ class CutoutsForCandidate(Cutouts):
 class SearchCandidates(HandlerBase):
     def do_the_things( self ):
         try:
+            nfound = -1
+            conn = db.DB._engine.raw_connection()
+            
             sys.stderr.write( "Starting SearchCandidates\n" )
             self.jsontop()
             data = json.loads( web.data() )
@@ -497,68 +501,14 @@ class SearchCandidates(HandlerBase):
             
             subs = {}
 
-            preconds = []
-            if data['allorsome'] != "all":
-                preconds.append( f"e.proposalid IN :props" )
-                subs['props'] = tuple( data['proposals'] )
-            if data['usestartdate']:
-                preconds.append( f"e.mjd>=:startdate" )
-                d = util.asDateTime( data['startdate'] )
-                subs['startdate'] = util.mjd( d.year, d.month, d.day, d.hour, d.minute, d.second )
-            if data['useenddate']:
-                preconds.append( f"e.mjd<=:enddate" )
-                d = util.asDateTime( data['enddate'] )
-                subs['enddate'] = util.mjd( d.year, d.month, d.day, d.hour, d.minute, d.second )
-            if data['usegallatmin']:
-                preconds.append( f"( e.gallat>:gallatmin OR e.gallat<:neggallatmin )" )
-                subs['gallatmin'] = data['gallatmin']
-                subs['neggallatmin'] = -data['gallatmin']
-            if data['usegallatmax']:
-                preconds.append( f"( e.gallat<:gallatmax AND e.gallat>:neggallatmax )" )
-                subs['gallatmax'] = data['gallatmax']
-                subs['neggallatmax'] = -data['gallatmax']
-            if data['usera']:
-                preconds.append( f"q3c_radial_query(o.ra,o.dec,:ra,:dec,:radius)" )
-                subs['ra'] = data['ra']
-                subs['dec'] = data['dec']
-                subs['radius'] = data['radius']
-            if len(preconds) > 0:
-                precondclause = " AND ".join( preconds )
-            else:
-                precondclause = ""
-
-            # sosubq = ( "SELECT o.id AS id,o.candidate_id AS cid FROM objects o " )
-            # if len(precondclause) > 0:
-            #     sosubq += ( "INNER JOIN subtractions s ON o.subtraction_id=s.id "
-            #                 "INNER JOIN exposures e ON s.exposure_id=e.id "
-            #                 "WHERE " + precondclause + " AND " )
-            # else:
-            #     sosubq += "WHERE "
-            # sosubq += "(o.flux/o.fluxerr)>=:sncut "
-
-            # subs["sncut"] = data["sncut"]
-
-            # rbsubq = ( "SELECT o.id AS id,o.candidate_id AS cid FROM objects o " )
-            # if len(precondclause) > 0:
-            #     rbsubq += ( "INNER JOIN subtractions s ON o.subtraction_id=s.id "
-            #                 "INNER JOIN exposures e ON s.exposure_id=e.id " )
-            # rbsubq += ( "INNER JOIN objectrbs r ON o.id=r.object_id "
-            #             "INNER JOIN rbtypes t ON r.rbtype_id=t.id " )
-            # if len(precondclause) > 0:
-            #     rbsubq += "WHERE " + precondclause + " AND "
-            # else:
-            #     rbsubq += "WHERE "
-            # rbsubq += "t.id=:rbtype AND r.rb>t.rbcut "
-            # if data['usesncut']:
-            #     rbsubq += "AND (o.flux/o.fluxerr)>:sncut "
-
-            # subs["rbtype"] = data["rbtype"]
-
             # First query : get all candidates that are detected
-            #   according to non-count conditions between startdate and
-            #   enddate
+            #   according between startdate and enddate with
+            #   at least the minimum S/N (if requested), considering
+            #   only high-r/b objects (if requested), also using
+            #   gallat and ra/dec cuts, and proposal cuts
             
-            query = ( "SELECT DISTINCT o.candidate_id AS candid "
+            query = ( "SELECT DISTINCT o.candidate_id AS id "
+                      "INTO TEMP TABLE temp_findcands "
                       "FROM objects o "
                       "INNER JOIN subtractions s ON o.subtraction_id=s.id "
                       "INNER JOIN exposures e ON s.exposure_id=e.id " )
@@ -566,168 +516,259 @@ class SearchCandidates(HandlerBase):
                 query += ( "INNER JOIN objectrbs r ON o.id=r.object_id "
                            "INNER JOIN rbtypes t ON r.rbtype_id=t.id " )
             conds = []
-            if len( precondclause ) > 0:
-                conds.append( precondclause )
+            if data['allorsome'] != "all":
+                conds.append( f"e.proposalid IN %(props)s" )
+                subs['props'] = tuple( data['proposals'] )
+            if data['usestartdate']:
+                conds.append( f"e.mjd>=%(startdate)s" )
+                d = util.asDateTime( data['startdate'] )
+                subs['startdate'] = util.mjd( d.year, d.month, d.day, d.hour, d.minute, d.second )
+            if data['useenddate']:
+                conds.append( f"e.mjd<=%(enddate)s" )
+                d = util.asDateTime( data['enddate'] )
+                subs['enddate'] = util.mjd( d.year, d.month, d.day, d.hour, d.minute, d.second )
+            if data['usegallatmin']:
+                conds.append( f"( e.gallat>%(gallatmin)s OR e.gallat<%(neggallatmin)s )" )
+                subs['gallatmin'] = data['gallatmin']
+                subs['neggallatmin'] = -float( data['gallatmin'] )
+            if data['usegallatmax']:
+                conds.append( f"( e.gallat<%(gallatmax)s AND e.gallat>%(neggallatmax)s )" )
+                subs['gallatmax'] = data['gallatmax']
+                subs['neggallatmax'] = -float( data['gallatmax'] )
+            if data['usera']:
+                conds.append( f"q3c_radial_query(o.ra,o.dec,%(ra)s,%(dec)s,%(radius)s)" )
+                subs['ra'] = data['ra']
+                subs['dec'] = data['dec']
+                subs['radius'] = data['radius']
             if data['useuserbcut']:
-                conds.append( "t.id=:rbtype AND r.rb>t.rbcut " )
+                conds.append( "t.id=%(rbtype)s AND r.rb>=t.rbcut " )
             if data['usesncut']:
-                conds.append( "(o.flux/o.fluxerr)>:sncut " )
+                conds.append( "(o.flux/o.fluxerr)>%(sncut)s " )
             if len( conds ) > 0:
                 query += "WHERE " + " AND ".join( conds )
             else:
-                raise RuntimeError( "You just asked for every single candidate.  That's not what you wanted." )
+                raise RuntimeError( "You just asked *all candidates*.  You do not want to do that." )
             subs['rbtype'] = data['rbtype']
             subs['sncut'] = data['sncut']
             
             sys.stderr.write( f'Starting massive object finding query\n' )
-            saq = sa.sql.text( query )
             # sys.stderr.write( f'{str(saq)}\n' )
             # sys.stderr.write( f'subs: {subs}\n' )
-            conn = self.db.db.connection()
-            rows = conn.execute( saq, **subs )
-            candlist = []
-            for row in rows:
-                candlist.append( row.candid )
-            sys.stderr.write( f'Done with massive object finding query, found {len(candlist)} candidates\n' )
+            cursor = conn.cursor( )
+            cursor.execute( query, subs )
+            cursor.execute( "SELECT COUNT(*) FROM temp_findcands" )
+            res = cursor.fetchone()
+            sys.stderr.write( f'Done with massive object finding query; found {res[0]} candidates.\n' )
 
-            # Second query: filter this candidate list through count filters
-            #  considering the broader date range given by startcount and endcount
+            # Second and third queries: count the number of objects and high r/b objects
+            # within the date range
 
             dateconds = []
             if data['usestartcount']:
                 d = util.asDateTime( data['startcount'] )
-                dateconds.append( "e.mjd>=:startcount" )
+                dateconds.append( "e.mjd>=%(startcount)s" )
                 subs['startcount'] = util.mjd( d.year, d.month, d.day, d.hour, d.minute, d.second )
             elif data['usestartdate']:
-                dateconds.append( "e.mjd>=:startdate" )
+                dateconds.append( "e.mjd>=%(startdate)s" )
             if data['useendcount']:
                 d = util.asDateTime( data['endcount'] )
-                dateconds.append( "e.mjd<=:endcount" )
+                dateconds.append( "e.mjd<=%(endcount)s" )
                 subs['endcount'] = util.mjd( d.year, d.month, d.day, d.hour, d.minute, d.second )
             elif data['useenddate']:
-                dateconds.append( "e.mjd<=:enddate" )
+                dateconds.append( "e.mjd<=%(enddate)s" )
 
-            subs['candlist'] = tuple( candlist )
-
-            rbsubq = ( "SELECT o.id AS id,o.candidate_id AS cid FROM objects o "
-                       "INNER JOIN objectrbs r ON o.id=r.object_id "
-                       "INNER JOIN rbtypes t ON r.rbtype_id=t.id " )
-            if len(dateconds) > 0:
-                rbsubq += ( "INNER JOIN subtractions s ON o.subtraction_id=s.id "
-                            "INNER JOIN exposures e  ON s.exposure_id=e.id " )
-            rbsubq += "WHERE t.id=:rbtype AND r.rb>t.rbcut "
-            if data['usesncut']:
-                rbsubq += " AND (o.flux/o.fluxerr)>:sncut "
-            if len(dateconds) > 0:
-                rbsubq += "AND " + ( " AND ".join( dateconds ) )
-
-            sosubq = ( "SELECT o.id AS id,o.candidate_id AS cid FROM objects o " )
-            if len(dateconds) > 0:
-                sosubq += ( "INNER JOIN subtractions s ON o.subtraction_id=s.id "
-                            "INNER JOIN exposures e ON s.exposure_id=e.id " )
-            sosubq += "WHERE (o.flux/o.fluxerr)>=:sncut "
-            if len(dateconds) > 0:
-                sosubq += "AND " + ( " AND ".join( dateconds ) )
-                       
-                       
-            query = ( "SELECT c.id AS candid,"
-                      "COUNT(DISTINCT o.id) AS numobjs,"
-                      "COUNT(DISTINCT sno.id) AS numhighsn,"
-                      "COUNT(DISTINCT ho.id) AS numhighrb,"
-                      "COUNT(DISTINCT e.filter) AS numfilt,"
-                      "MIN(e.mjd) AS minmjd,MAX(e.mjd) AS maxmjd,"
-                      "MIN(o.mag) AS minmag,MAX(o.mag) AS maxmag "
-                      "FROM candidates c "
+            query = ( "SELECT c.id AS id,COUNT(o.id) AS numhighrb,COUNT(DISTINCT e.filter) AS highrbfiltcount,"
+                      "  MIN(e.mjd) AS highrbminmjd,MAX(e.mjd) AS highrbmaxmjd,"
+                      "  MIN(o.mag) AS highrbminmag,MAX(o.mag) AS highrbmaxmag "
+                      "INTO temp_filtercands "
+                      "FROM temp_findcands c "
                       "INNER JOIN objects o ON o.candidate_id=c.id "
+                      "INNER JOIN objectrbs r ON o.id=r.object_id "
+                      "INNER JOIN rbtypes t ON r.rbtype_id=t.id "
                       "INNER JOIN subtractions s ON o.subtraction_id=s.id "
-                      "INNER JOIN exposures e ON s.exposure_id=e.id "
-                      f"LEFT OUTER JOIN ( {sosubq} ) sno ON c.id=sno.cid "
-                      f"LEFT OUTER JOIN ( {rbsubq} ) ho ON c.id=ho.cid "
-                      "WHERE o.candidate_id IN :candlist " )
+                      "INNER JOIN exposures e ON s.exposure_id=e.id " )
+            query += "WHERE t.id=%(rbtype)s AND r.rb>=t.rbcut "
             if len(dateconds) > 0:
-                query += "AND " + ( " AND ".join( dateconds ) )
-
+                query += " AND " + ( " AND ".join(dateconds) )
+            if data['usesncut']:
+                query += " AND (o.flux/o.fluxerr)>%(sncut)s "
             query += " GROUP BY c.id"
 
-            query = ( f"SELECT candid,numobjs,numhighsn,numhighrb,numfilt,minmjd,maxmjd,minmag,maxmag "
-                      f"FROM ( {query} ) subq WHERE " )
-            conds = []
-            if data['usediffdays']:
-                conds.append( "maxmjd-minmjd>=:diffdays" )
-                subs['diffdays'] = data['diffdays']
-            if data['usebrightest']:
-                conds.append( "minmag>=:brightest" )
-                subs['brightest'] = data['brightest']
-            if data['usedimmest']:
-                conds.append( "maxmag<=:dimmest" )
-                subs['dimmest'] = data['dimmest']
-            if data['usenumdets']:
-                if data['usesncut']:
-                    conds.append( "numhighsn>=:numdets" )
-                else:
-                    conds.append( "numobjs>=:numdets" )
-                subs['numdets'] = data["numdets"]
-            if data['usehighrbdets']:
-                conds.append( "numhighrb>=:numhighrb" )
-                subs['numhighrb'] = data['highrbdets']
-            query += " AND ".join( conds )
-            query += " ORDER BY candid"
-
-            # sys.stderr.write( f'Query: {query}\n' )
-            # sys.stderr.write( f'Subs: {subs}\n' )
-
-            sys.stderr.write( f'Starting massive object filtering query\n' )
-            saq = sa.sql.text( query )
-            sys.stderr.write( f"{str(saq)}\n" )
-            sys.stderr.write( f"subs: {subs}\n" )
-            conn = self.db.db.connection()
-            rows = conn.execute( saq, **subs )
-            candinfo = {}
-            for row in rows:
-                candinfo[ row.candid ] = dict(row)
-                # force all expected properties to exist
-                candinfo[ row.candid ]['totnumobjs'] = 0
-                candinfo[ row.candid ]['totminmjd'] = 0
-                candinfo[ row.candid ]['totmaxmjd'] = 0
-                candinfo[ row.candid ]['totminmag'] = 0
-                candinfo[ row.candid ]['totmaxmag'] = 0
-            sys.stderr.write( f'Done with massive object filtering query, {len(candinfo)} candidates remain\n' )
-
-            # Third query: count total number of detections and total
-            # number of high rb detections for this filtered candidate list
-
-            subs['candlist'] = tuple( candinfo.keys() )
-
-            query = ( "SELECT c.id AS candid, COUNT(o.id) as numobjs,  "
-                      "MIN(e.mjd) AS minmjd, MAX(e.mjd) AS maxmjd, "
-                      "MIN(o.mag) AS minmag, MAX(o.mag) AS maxmag "
-                      "FROM candidates c "
+            sys.stderr.write( "Starting high rb count query\n" )
+            cursor = conn.cursor()
+            cursor.execute( query, subs )
+            # Do this to simplify grouping later
+            cursor.execute( "ALTER TABLE temp_filtercands ADD PRIMARY KEY (id)" )
+            cursor.execute( "SELECT COUNT(*) FROM temp_filtercands" )
+            res = cursor.fetchone()
+            sys.stderr.write( f"Done with high rb count query, {res[0]} rows in table.\n" )
+            
+            query = ( "SELECT c.*,COUNT(o.id) AS numhighsn,COUNT(DISTINCT e.filter) AS filtcount,"
+                      " MIN(e.mjd) AS highsnminmjd,MAX(e.mjd) AS highsnmaxmjd,"
+                      " MIN(o.mag) AS highsnminmag,MAX(o.mag) AS highsnmaxmag "
+                      "INTO temp_filtercands2 "
+                      "FROM temp_filtercands c "
                       "INNER JOIN objects o ON o.candidate_id=c.id "
                       "INNER JOIN subtractions s ON o.subtraction_id=s.id "
-                      "INNER JOIN exposures e ON s.exposure_id=e.id "
-                      "WHERE c.id IN :candlist "
-                      "GROUP BY c.id" )
+                      "INNER JOIN exposures e ON s.exposure_id=e.id " )
+            conds = []
+            if len( dateconds ) > 0:
+                conds.extend( dateconds )
+            if data['usesncut']:
+                conds.append( "(o.flux/o.fluxerr)>%(sncut)s" )
+            if len( conds ) > 0:
+                query += " WHERE " + ( " AND ".join(conds) )
+            query += " GROUP BY c.id"
 
-            sys.stderr.write( f'Starting total count subquery on {len(candinfo)} candidates\n' )
-            saq = sa.sql.text( query )
-            conn = self.db.db.connection()
-            rows = conn.execute( saq, **subs )
-            for row in rows:
-                candinfo[ row.candid ]['totnumobjs'] = int(row.numobjs)
-                candinfo[ row.candid ]['totminmjd'] = float(row.minmjd)
-                candinfo[ row.candid ]['totmaxmjd'] = float(row.maxmjd)
-                candinfo[ row.candid ]['totminmag'] = float(row.minmag)
-                if math.isnan( row.minmag ): candinfo[ row.candid ]['totminmag'] = 0
-                candinfo[ row.candid ]['totmaxmag'] = float(row.maxmag)
-                if math.isnan( row.maxmag ): candinfo[ row.candid ]['totmaxmag'] = 0
+            sys.stderr.write( "Starting object (maybe high s/n) count query\n" )
+            cursor = conn.cursor()
+            cursor.execute( query, subs )
+            # Do this to simplify grouping later
+            cursor.execute( "ALTER TABLE temp_filtercands2 ADD PRIMARY KEY (id)" )
+            cursor.execute( "SELECT COUNT(*) FROM temp_filtercands2" )
+            res = cursor.fetchone()
+            sys.stderr.write( f"Object count query done, {res[0]} rows in table.\n" )
+
+            # Fourth query: filter this list
+            query = "SELECT * INTO temp_filtercands3 FROM temp_filtercands2 c "
+            conds = []
+            if data['usediffdays']:
+                conds.apppend( 'highrbmaxmjd-highrbminmjd>=%(diffday)s' )
+                subs['diffdays'] = data['diffdays']
+            if data['usebrightest']:
+                conds.append( "highrbminmag>=%(brightest)s" )
+                subs['brightest'] = data['brightest']
+            if data['usedimmest']:
+                conds.append( "highrbmaxmag<=%(dimmest)s" )
+                subs['dimmest'] = data['dimmest']
+            if data['usenumdets']:
+                conds.append( "numhighsn>=%(numdets)s" )
+                subs['numdets'] = data["numdets"]
+            if data['usehighrbdets']:
+                conds.append( "numhighrb>=%(numhighrb)s" )
+                subs['numhighrb'] = data['highrbdets']
+            if len(conds) > 0:
+                query += "WHERE " + ( " AND ".join( conds ) )
+            query += " ORDER BY c.id"
+
+            sys.stderr.write( "Starting filter query\n" )
+            cursor = conn.cursor()
+            cursor.execute( query, subs )
+            cursor.execute( "ALTER TABLE temp_filtercands3 ADD PRIMARY KEY (id)" )
+            cursor.execute( "SELECT COUNT(*) FROM temp_filtercands3" )
+            res = cursor.fetchone()
+            sys.stderr.write( f"Filter query done, {res[0]} candidates remian." )
+            
+            # POSSIBLE fifth and sixth queries.  Reject candidates with too many detections *outside* the filtered
+            #   range.
+
+            if ( ( data["usestartcount"] or data["useendcount"] )
+                 and
+                 ( data["useoutsidehighrbdets"] or data["useoutsidedets"] )
+            ):
+                outdateconds = []
+                if data['usestartcount']:
+                    d = util.asDateTime( data['startcount'] )
+                    outdateconds.append( "e.mjd<%(startcount)s" )
+                if data['useendcount']:
+                    d = util.asDateTime( data['endcount'] )
+                    outdateconds.append( "e.mjd>%(endcount)s" )
+                outdateconds = "(" + ( " OR ".join( outdateconds ) ) + ")"
+
+                sys.stderr.write( "Starting outside-date-range rejection filter\n" )
                 
+                if data["useoutsidehighrbdets"]:
+                    query = ( "SELECT c.id,COUNT(o.id) AS highrboutside "
+                              "INTO temp_filteroutdate1 "
+                              "FROM temp_filtercands3 c "
+                              "INNER JOIN objects o ON c.id=o.candidate_id "
+                              "INNER JOIN subtractions s ON o.subtraction_id=s.id "
+                              "INNER JOIN exposures e ON s.exposure_id=e.id "
+                              "INNER JOIN objectrbs r ON o.id=r.object_id "
+                              "INNER JOIN rbtypes t ON r.rbtype_id=t.id "
+                              f"WHERE {outdateconds} "
+                              "AND t.id=%(rbtype)s AND r.rb>=t.rbcut " )
+                    if data['usesncut']:
+                        query += " AND (o.flux/o.fluxerr)>%(sncut)s "
+                    query += "GROUP BY c.id"
+                else:
+                    query = ( "SELECT c.id,0 AS highrboutside INTO temp_filteroutedate1 FROM temp_filtercands3 c" )
+                    
+                cursor = conn.cursor()
+                cursor.execute( query, subs )
 
+                if data["useoutsidedets"]:
+                    query = ( "SELECT c.id,COUNT(o.id) AS numoutside "
+                              "INTO temp_filteroutdate2 "
+                              "FROM temp_filteroutdate1 c "
+                              "INNER JOIN objects o ON c.id=o.candidate_id "
+                              "INNER JOIN subtractions s ON o.subtraction_id=s.id "
+                              "INNER JOIN exposures e ON s.exposure_id=e.id "
+                              f"WHERE {outdateconds} " )
+                    if data['usesncut']:
+                        query += " AND (o.flux/o.fluxerr)>%(sncut)s "
+                    query += "GROUP BY c.id"
+                else:
+                    query = ( "SELECT c.id,c.highrboutside,0 AS numoutside "
+                              "INTO temp_filteroutdate2 FROM temp_filteroutdate1 c" )
+
+                cursor = conn.cursor()
+                cursor.execute( query, subs )
+
+                query = ( "SELECT c.* "
+                          "INTO temp_filtercands4 "
+                          "FROM temp_filtercands3 c "
+                          "INNER JOIN temp_filteroutdate2 od ON c.id=od.id " )
+                conds = []
+                if data["useoutsidehighrbdets"]:
+                    conds.append( "highrboutside<=%(highrboutside)s" )
+                    subs['highrboutside'] = data['outsidehighrbdets']
+                if data["useoutsidedets"]:
+                    conds.append( "numoutside<=%(numoutside)s" )
+                    subs['numoutside'] = data['outsidedets']
+                query += "WHERE " + ( " AND ".join( conds ) )
+
+                cursor = conn.cursor()
+                cursor.execute( query, subs )
+                cursor.execute( "ALTER TABLE temp_filtercands4 ADD PRIMARY KEY (id)" )
+                cursor.execute( "SELECT COUNT(*) FROM temp_filtercands4" )
+                res = cursor.fetchone()
+                sys.stderr.write( f"Outside-date-rejection filter done, {res[0]} candidates remain." )
+            else:
+                query = ( "ALTER TABLE temp_filtercands3 RENAME TO temp_filtercands4" )
+                cursor.execute( query )
+                
+            # Last query: full counts and pull
+            
+            sys.stderr.write( "Sarting final query to pull date" )
+            query = ( "SELECT c.*,COUNT(o.id) AS totnobjs, "
+                      "  MAX(e.mjd) AS totmaxmjd,MIN(e.mjd) AS totminmjd, "
+                      "  MAX(o.mag) AS totmaxmag,MIN(o.mag) AS totminmag "
+                      "FROM temp_filtercands4 c "
+                      "INNER JOIN objects o ON c.id=o.candidate_id "
+                      "INNER JOIN subtractions s ON s.id=o.subtraction_id "
+                      "INNER JOIN exposures e ON e.id=s.exposure_id "
+                      "GROUP BY c.id ORDER BY c.id" )
+            cursor = conn.cursor( cursor_factory=psycopg2.extras.DictCursor )
+            cursor.execute( query, subs )
+            rows = cursor.fetchall()
+            rows = [ dict(row) for row in rows ]
+
+            # AUGH.  JSON makes NaN a pain in the butt
+            for row in rows:
+                for key, val in row.items():
+                    if isinstance( val, numbers.Number ) and math.isnan( val ):
+                        row[key] = None
+            
+            nfound = len(rows)
             with open( "/sessions/test.txt", "w" ) as ofp:
-                ofp.write( json.dumps( list(candinfo.values() ) ) )
-            return json.dumps( list( candinfo.values() ) )
+                ofp.write( json.dumps( list( rows ) ) )
+            return json.dumps( list( rows ) )
         except Exception as e:
             return logerr( self.__class__, e )
-                
+        finally:
+            conn.close()
+            sys.stderr.write( f'All done with candidate finding, for better or worse; nfound={nfound}' )
                 
 # ======================================================================
 
