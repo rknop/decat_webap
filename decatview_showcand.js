@@ -119,9 +119,18 @@ ShowCandidate.prototype.actuallyShowTheThings = function( data ) {
 
     var didplot = new Set();
     var coloroff = 0;
+    var ymins = {};
+    var ymaxs = {};
+    var xmin = 1e32;
+    var xmax = -1e32;
     for ( let band of ShowCandidate.filterorder ) {
         if ( this.bands.has( band ) ) {
-            this.plotltcv( data.objs, band, ShowCandidate.filtercolors[band] );
+            let limits = this.plotltcv( data.objs, band, ShowCandidate.filtercolors[band] );
+            console.log( "Got limits: " + limits );
+            ymins[band] = limits[2];
+            ymaxs[band] = limits[3];
+            if ( limits[0] < xmin ) xmin = limits[0];
+            if ( limits[1] > xmax ) xmax = limits[1];
             didplot.add( band );
         }
     }
@@ -130,15 +139,26 @@ ShowCandidate.prototype.actuallyShowTheThings = function( data ) {
             this.plotltcv( data.objs, band, ShowCandidate.othercolors[ coloroff ] );
             coloroff += 1;
             if ( coloroff >= ShowCandidate.othercolors.length ) coloroff = 0;
+            ymins[band] = limits[2];
+            ymaxs[band] = limits[3];
+            if ( limits[0] < xmin ) xmin = limits[0];
+            if ( limits[1] > xmax ) xmax = limits[1];
         }
     }
-    
+
+    for ( let band of this.bands ) {
+        this.plotters[band].defaultlimits = [ xmin, xmax, ymins[band], ymaxs[band] ];
+        this.plotters[band].zoomToDefault();
+    }
+        
     this.cutouts.render( data.objs );
 }
 
 // **********************************************************************
 
 ShowCandidate.prototype.plotltcv = function( objs, band, color ) {
+    var self = this;
+    
     let x = [];
     let y = [];
     let dy = [];
@@ -152,12 +172,15 @@ ShowCandidate.prototype.plotltcv = function( objs, band, color ) {
     }
     let div = rkWebUtil.elemaker( "div", this.ltcvsdiv, { "classes": [ "vbox", "ltcvdiv" ] } );
     this.divsforltcvs[ band ] = div;
+
+    let buttons = [ rkWebUtil.button( div, "Share X Range", function(e) { self.ltcvShareXRange( band ) } ) ];
     
     this.plotters[ band ] = new SVGPlot.Plot( { "divid": "svgplotdiv-" + band,
                                                 "svgid": "svgplotsvg-" + band,
                                                 "title": band + "-band",
                                                 "xtitle": "mjd",
                                                 "ytitle": "flux (arb.)",
+                                                "buttons": buttons
                                               } );
     div.appendChild( this.plotters[ band ].topdiv );
     this.datasets[ band ] = new SVGPlot.Dataset( { "name": band,
@@ -167,6 +190,21 @@ ShowCandidate.prototype.plotltcv = function( objs, band, color ) {
                                                    "color": color,
                                                    "linewid": 0 } );
     this.plotters[ band ].addDataset( this.datasets[ band ] );
+    
+    this.plotters[ band ].redraw();
+    return [ this.plotters[band].xmin, this.plotters[band].xmax,
+             this.plotters[band].ymin, this.plotters[band].ymax  ];
+}
+
+// **********************************************************************
+
+ShowCandidate.prototype.ltcvShareXRange = function( band ) {
+    let xmin = this.plotters[band].xmin;
+    let xmax = this.plotters[band].xmax;
+    for ( let b of this.bands ) {
+        this.plotters[b].xmin = xmin;
+        this.plotters[b].xmax = xmax;
+    }
 }
 
 // **********************************************************************

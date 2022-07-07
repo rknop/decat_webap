@@ -81,7 +81,7 @@ class DB(object):
             cls._engine = sa.create_engine(f'postgresql://{cls._user}:{cls._password}@{cls._host}:{cls._port}'
                                            f'/{cls._database}', poolclass=sqlalchemy.pool.NullPool )
             Base.prepare( cls._engine, reflect=True, name_for_collection_relationship=cls.collectionname )
-            cls.sessionfac = sa.orm.sessionmaker( bind=cls._engine, expire_on_commit=False )
+            cls._sessionfac = sa.orm.sessionmaker( bind=cls._engine, expire_on_commit=False )
 
     @staticmethod
     def collectionname( base, local_cls, referred_cls, constraint ):
@@ -98,7 +98,7 @@ class DB(object):
         if db is None:
             if DB._engine is None:
                 DB.DBinit()
-            self.db = DB.sessionfac()
+            self.db = DB._sessionfac()
             self.mustclose = True
         else:
             self.db = db

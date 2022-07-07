@@ -45,12 +45,13 @@ decatview.Context.prototype.init = function() {
                       "desc": "Search objects detected ending: ",
                       "note": "GMT; yyyy-mm-dd or yyyy-mm-dd hh:mm:ss" },
         "sncut" : { "value": 5,
-                    "use": true,
+                    "use": false,
                     "type": "number",
                     "min": 0.,
                     "max": 50.,
                     "step": 0.5,
-                    "desc": "S/N cut" },
+                    "desc": "S/N cut",
+                    "note": "(Remember only S/N≥5ish get saved in the first place)" },
         "userbcut": { "value": null,
                       "use": true,
                       "desc": "Only high r/b objects in initial search" },
@@ -68,7 +69,7 @@ decatview.Context.prototype.init = function() {
                        "min": 2,
                        "max": 10,
                        "step": 1,
-                       "desc": "Seen min. diff. days: ",
+                       "desc": "Days bet. first and last detection ≥",
                        "note": "Only considering high r/b" },
         "brightest" : { "value": 16,
                         "use": false,
@@ -86,6 +87,13 @@ decatview.Context.prototype.init = function() {
                       "step": 0.5,
                       "desc": "Max (dimmest) magnitude ≤",
                       "note": "Only considering high r/b" },
+        "numfilters": { "value": 3,
+                        "use": false,
+                        "type": "number",
+                        "min": 2,
+                        "max": 20,
+                        "step": 1,
+                        "desc": "Seen in at least this many bands:" },
         "numdets" : { "value": 4,
                       "use": true,
                       "type": "number",
@@ -607,17 +615,19 @@ decatview.Context.prototype.searchForCandidates = function() {
     this.backToHome( this.maindiv );
     rkWebUtil.elemaker( "h2", this.maindiv, { "text": "Candidate Search" } );
 
+    this.searchinfodiv = rkWebUtil.elemaker( "div", this.maindiv );
+    
     data.rbtype = this.chosenrbtype_candsearch;
     if ( this.limitallproposalsorsome == "all" ) {
         data.allorsome = "all";
-        rkWebUtil.elemaker( "p", this.maindiv, { "text": "Searching all proposals" } );
+        rkWebUtil.elemaker( "p", this.searchinfodiv, { "text": "Searching all proposals" } );
     } else {
         data.allorsome = "some";
         data.proposals = this.limitselectedproposals;
-        rkWebUtil.elemaker( "p", this.maindiv, { "text": "Searching proposals: " + this.limitselectedproposals } );
+        rkWebUtil.elemaker( "p", this.searchinfodiv, { "text": "Searching proposals: " + this.limitselectedproposals } );
     }
 
-    var ul = rkWebUtil.elemaker( "ul", this.maindiv, );
+    var ul = rkWebUtil.elemaker( "ul", this.searchinfodiv, );
     for ( let limit in this.limits ) {
         data["use" + limit] = this.limits[limit].use;
         data[limit] = this.limits[limit].value;
@@ -636,8 +646,21 @@ decatview.Context.prototype.searchForCandidates = function() {
 // **********************************************************************
 
 decatview.Context.prototype.ingestAndShowCands = function( data ) {
+    var p = rkWebUtil.elemaker( "p", this.searchinfodiv );
+    p.appendChild( document.createTextNode( "Initially found: " + data['ninitiallyfound'] ) )
+    rkWebUtil.elemaker( "br", p );
+    p.appendChild( document.createTextNode( "After limiting initial search to high r/b: " + data['nhighrb'] ) );
+    rkWebUtil.elemaker( "br", p );
+    p.appendChild( document.createTextNode( "After object (maybe high/sn) count filter: " + data['nobjcount'] ) );
+    rkWebUtil.elemaker( "br", p );
+    p.appendChild( document.createTextNode( "After date/mag/rb/sn filter: " + data['ndatemagrbsnfiltered'] ) );
+    rkWebUtil.elemaker( "br", p );
+    p.appendChild( document.createTextNode( "After outside-date-range filter: " + data['noutsidedate'] ) );
+    rkWebUtil.elemaker( "br", p );
+    p.appendChild( document.createTextNode( "Final number of candidates found: " + data['n'] ) );
+
     this.showcandsrows = []
-    for ( let row of data ) {
+    for ( let row of data['candidates'] ) {
         // The "highsn" variables here are misnamed.  Really it's
         //    "in date range", and *may* include a s/n clut
         this.showcandsrows.push(
@@ -667,11 +690,35 @@ decatview.Context.prototype.ingestAndShowCands = function( data ) {
         )
     }
 
+    this.showcandsortkey = "id";
+    this.showcandsortascending = true;
+    this.showCands();
+}
+
+decatview.Context.prototype.sortCandsAndShow = function( key, ascending=true ) {
+    if ( ( this.showcandsortkey == key ) && ( this.showcandsortascending == ascending ) ) return;
+    
+    if ( ascending ) {
+        this.showcandsrows.sort( function( a, b ) {
+            if ( a[key] > b[key] ) return 1;
+            else if ( a[key] < b[key] ) return -1;
+            else return 0;
+        } );
+    } else {
+        this.showcandsrows.sort( function( a, b ) {
+            if ( a[key] < b[key] ) return 1;
+            else if ( a[key] > b[key] ) return -1;
+            else return 0;
+        } );
+    }
+    this.showcandsortkey = key;
+    this.showcandsortascending = ascending;
     this.showCands();
 }
 
 decatview.Context.prototype.showCands = function() {
-    var table, tr, td, a, href;
+    var table, th, tr, td, a, href, span;
+    var self = this;
     
     rkWebUtil.wipeDiv( this.candsearchdiv );
     table = rkWebUtil.elemaker( "table", this.candsearchdiv, { "classes": [ "candlist" ] } );
@@ -685,17 +732,39 @@ decatview.Context.prototype.showCands = function() {
                                     "attributes": { "colspan": 4 } } );
     tr = rkWebUtil.elemaker( "tr", table );
     let first = true;
-    for ( let hdr of [ "Candidate",
-                       "N.Objs", "N.rb≥cut", "N.filters", "Min MJD", "Δt", "Min Mag", "Max Mag",
-                       "N.Objs", "Δt", "Min Mag", "Max Mag", "Nin/Ntot"
-                     ] ) {
+    let fields = [ [ "Candidate", "id" ],
+                   [ "N.Objs", "numobjs" ],
+                   [ "N.rb≥cut", "numhighrb" ],
+                   [ "N.filters", "numfilt" ],
+                   [ "Min MJD", "minmjd" ],
+                   [ "Δt", "deltamjd" ],
+                   [ "Min Mag", "minmag" ],
+                   [ "Max Mag", "maxmag" ],
+                   [ "N.Objs", "totnobjs" ],
+                   [ "Δt", "totdeltamjd" ],
+                   [ "Max Mag", "totmaxmag" ],
+                   [ "Min Mag", "totminmag" ],
+                   [ "Nin/Ntot", "fracin" ] ];
+    for ( let field of fields ) {
+        let hdr = field[0];
+        let key = field[1];
         let stuff = { "text": hdr };
         if ( hdr == "N.Objs") {
             if ( first ) first = false;
             else stuff["classes"] = [ "borderleft" ];
         }
         if ( hdr == "Nin/Ntot" ) stuff['classes'] = [ 'borderleft' ];
-        rkWebUtil.elemaker( "th", tr, stuff );
+        th = rkWebUtil.elemaker( "th", tr, stuff );
+        span = rkWebUtil.elemaker( "span", th, { "text": "▲",
+                                                 "click": function(e) { self.sortCandsAndShow( key, true ); } } );
+        if ( ( this.showcandsortkey == key ) && ( this.showcandsortascending ) )
+            span.classList.add( "good" );
+        span.classList.add( "pointer" );
+        span = rkWebUtil.elemaker( "span", th, { "text": "▼",
+                                                 "click": function(e) { self.sortCandsAndShow( key, false ); } } );
+        if ( ( this.showcandsortkey == key ) && ( ! this.showcandsortascending ) )
+            span.classList.add( "good" );
+        span.classList.add( "pointer" );
     }
 
     var decimals = { 'minmjd': 3,

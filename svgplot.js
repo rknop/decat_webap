@@ -155,7 +155,8 @@ SVGPlot.Plot = function( inparams = {} )
                     "minautoyrange": 1.,
                     "equalaspect": false,
                     "zoommode": "full",          // "full" (show all), "default", or "manual"
-                    "defaultlimits": []
+                    "defaultlimits": [],
+                    "buttons": []
                  };
     Object.assign( this.params, inparams );
 
@@ -175,6 +176,9 @@ SVGPlot.Plot = function( inparams = {} )
     button.appendChild( document.createTextNode( "Zoom All" ) );
     hbox.appendChild( button );
     button.addEventListener( "click", function() { self.zoomToFull(); } );
+    for ( button of this.params.buttons ) {
+        hbox.appendChild( button );
+    }
     hbox.appendChild( document.createTextNode( "  Shift+LMB to zoom" ) );
     
     this.clickcallback = function( event ) { self.click( event ); };

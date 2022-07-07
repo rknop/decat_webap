@@ -558,6 +558,7 @@ class SearchCandidates(HandlerBase):
             cursor.execute( query, subs )
             cursor.execute( "SELECT COUNT(*) FROM temp_findcands" )
             res = cursor.fetchone()
+            ninitiallyfound = res[0]
             sys.stderr.write( f'Done with massive object finding query; found {res[0]} candidates.\n' )
 
             # Second and third queries: count the number of objects and high r/b objects
@@ -601,6 +602,7 @@ class SearchCandidates(HandlerBase):
             cursor.execute( "ALTER TABLE temp_filtercands ADD PRIMARY KEY (id)" )
             cursor.execute( "SELECT COUNT(*) FROM temp_filtercands" )
             res = cursor.fetchone()
+            nhighrb = res[0]
             sys.stderr.write( f"Done with high rb count query, {res[0]} rows in table.\n" )
             
             query = ( "SELECT c.*,COUNT(o.id) AS numhighsn,COUNT(DISTINCT e.filter) AS filtcount,"
@@ -627,6 +629,7 @@ class SearchCandidates(HandlerBase):
             cursor.execute( "ALTER TABLE temp_filtercands2 ADD PRIMARY KEY (id)" )
             cursor.execute( "SELECT COUNT(*) FROM temp_filtercands2" )
             res = cursor.fetchone()
+            nobjcount = res[0]
             sys.stderr.write( f"Object count query done, {res[0]} rows in table.\n" )
 
             # Fourth query: filter this list
@@ -647,6 +650,9 @@ class SearchCandidates(HandlerBase):
             if data['usehighrbdets']:
                 conds.append( "numhighrb>=%(numhighrb)s" )
                 subs['numhighrb'] = data['highrbdets']
+            if data['usenumfilters']:
+                conds.append( "filtcount>=%(numfilters)s" )
+                subs['numfilters'] = data['numfilters']
             if len(conds) > 0:
                 query += "WHERE " + ( " AND ".join( conds ) )
             query += " ORDER BY c.id"
@@ -657,11 +663,13 @@ class SearchCandidates(HandlerBase):
             cursor.execute( "ALTER TABLE temp_filtercands3 ADD PRIMARY KEY (id)" )
             cursor.execute( "SELECT COUNT(*) FROM temp_filtercands3" )
             res = cursor.fetchone()
-            sys.stderr.write( f"Filter query done, {res[0]} candidates remian." )
+            ndatemagrbsnfiltered = res[0]
+            sys.stderr.write( f"Filter query done, {res[0]} candidates remain.\n" )
             
             # POSSIBLE fifth and sixth queries.  Reject candidates with too many detections *outside* the filtered
             #   range.
 
+            noutsidedate = None
             if ( ( data["usestartcount"] or data["useendcount"] )
                  and
                  ( data["useoutsidehighrbdets"] or data["useoutsidedets"] )
@@ -733,14 +741,15 @@ class SearchCandidates(HandlerBase):
                 cursor.execute( "ALTER TABLE temp_filtercands4 ADD PRIMARY KEY (id)" )
                 cursor.execute( "SELECT COUNT(*) FROM temp_filtercands4" )
                 res = cursor.fetchone()
-                sys.stderr.write( f"Outside-date-rejection filter done, {res[0]} candidates remain." )
+                noutsidedate = res[0]
+                sys.stderr.write( f"Outside-date-rejection filter done, {res[0]} candidates remain.\n" )
             else:
                 query = ( "ALTER TABLE temp_filtercands3 RENAME TO temp_filtercands4" )
                 cursor.execute( query )
                 
             # Last query: full counts and pull
             
-            sys.stderr.write( "Sarting final query to pull date" )
+            sys.stderr.write( "Starting final query to pull data\n" )
             query = ( "SELECT c.*,COUNT(o.id) AS totnobjs, "
                       "  MAX(e.mjd) AS totmaxmjd,MIN(e.mjd) AS totminmjd, "
                       "  MAX(o.mag) AS totmaxmag,MIN(o.mag) AS totminmag "
@@ -761,14 +770,21 @@ class SearchCandidates(HandlerBase):
                         row[key] = None
             
             nfound = len(rows)
-            with open( "/sessions/test.txt", "w" ) as ofp:
-                ofp.write( json.dumps( list( rows ) ) )
-            return json.dumps( list( rows ) )
+            # with open( "/sessions/test.txt", "w" ) as ofp:
+            #     ofp.write( json.dumps( list( rows ) ) )
+            return json.dumps( {
+                'ninitiallyfound': ninitiallyfound,
+                'nhighrb': nhighrb,
+                'nobjcount': nobjcount,
+                'ndatemagrbsnfiltered': ndatemagrbsnfiltered,
+                'noutsidedate': noutsidedate,
+                'n': nfound,
+                'candidates': list( rows ) } )
         except Exception as e:
             return logerr( self.__class__, e )
         finally:
             conn.close()
-            sys.stderr.write( f'All done with candidate finding, for better or worse; nfound={nfound}' )
+            sys.stderr.write( f'All done with candidate finding, for better or worse; nfound={nfound}\n' )
                 
 # ======================================================================
 
