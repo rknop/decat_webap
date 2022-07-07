@@ -633,7 +633,7 @@ class SearchCandidates(HandlerBase):
             query = "SELECT * INTO temp_filtercands3 FROM temp_filtercands2 c "
             conds = []
             if data['usediffdays']:
-                conds.apppend( 'highrbmaxmjd-highrbminmjd>=%(diffday)s' )
+                conds.append( 'highrbmaxmjd-highrbminmjd>=%(diffdays)s' )
                 subs['diffdays'] = data['diffdays']
             if data['usebrightest']:
                 conds.append( "highrbminmag>=%(brightest)s" )
@@ -692,7 +692,7 @@ class SearchCandidates(HandlerBase):
                         query += " AND (o.flux/o.fluxerr)>%(sncut)s "
                     query += "GROUP BY c.id"
                 else:
-                    query = ( "SELECT c.id,0 AS highrboutside INTO temp_filteroutedate1 FROM temp_filtercands3 c" )
+                    query = ( "SELECT c.id,0 AS highrboutside INTO temp_filteroutdate1 FROM temp_filtercands3 c" )
                     
                 cursor = conn.cursor()
                 cursor.execute( query, subs )
