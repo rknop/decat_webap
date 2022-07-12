@@ -166,8 +166,10 @@ ShowCandidate.prototype.plotltcv = function( objs, band, color ) {
     for ( let obj of objs ) {
         if ( obj.filter == band ) {
             x.push( obj.mjd );
-            y.push( obj.flux );
-            dy.push( obj.fluxerr );
+            let flux = 10**( (obj.mag - 29.)/-2.5 );
+            let dflux = obj.magerr * Math.log(10)/2.5 * flux;
+            y.push( flux )
+            dy.push( dflux );
         }
     }
     let div = rkWebUtil.elemaker( "div", this.ltcvsdiv, { "classes": [ "vbox", "ltcvdiv" ] } );

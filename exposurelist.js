@@ -117,6 +117,7 @@ ExposureList.prototype.actuallyShowExposures = function( data ) {
     rkWebUtil.elemaker( "th", tr, { "text": "b" } );
     rkWebUtil.elemaker( "th", tr, { "text": "#Subs" } );
     rkWebUtil.elemaker( "th", tr, { "text": "#Done" } );
+    rkWebUtil.elemaker( "th", tr, { "text": "#Copy" } );
     rkWebUtil.elemaker( "th", tr, { "text": "N.Srcs" } );
     rkWebUtil.elemaker( "th", tr, { "text": "rb≥cut" } );
 
@@ -138,6 +139,7 @@ ExposureList.prototype.actuallyShowExposures = function( data ) {
         rkWebUtil.elemaker( "td", tr, { "text": exposure.gallat.toFixed(4) } );
         rkWebUtil.elemaker( "td", tr, { "text": exposure.numsubs } );
         rkWebUtil.elemaker( "td", tr, { "text": exposure.numdone } );
+        rkWebUtil.elemaker( "td", tr, { "text": exposure.numcopyout } );
         rkWebUtil.elemaker( "td", tr, { "text": exposure.numobjs } );
         let rbid = ( Math.abs(exposure.gallat)>=20 ? this.rbinfo.exgal.id : this.rbinfo.gal.id );
         let rbtag = ( Math.abs(exposure.gallat)>=20 ? "exgal" : "gal" );

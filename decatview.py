@@ -152,6 +152,7 @@ class GetRBTypes(HandlerBase):
 class FindExposures(HandlerBase):
     checkpointerrorvalue = 999
     checkpointdonevalue = 27
+    checkpointcopyoutvalue = 28
     
     def do_the_things( self ):
         try:
@@ -214,6 +215,18 @@ class FindExposures(HandlerBase):
             for row in rows:
                 exposures[row['id']]['numdone'] = row['numdone']
 
+            sql = ( "SELECT e.id AS id,COUNT(p.id) AS numcopyout "
+                    "FROM temp_find_exposures e "
+                    "INNER JOIN processcheckpoints p ON p.exposure_id=e.id "
+                    "WHERE p.event_id=%(copyoutvalue)s "
+                    "GROUP BY e.id")
+            subs = { 'copyoutvalue': self.checkpointcopyoutvalue }
+            cursor = conn.cursor( cursor_factory=psycopg2.extras.DictCursor )
+            cursor.execute( sql, subs )
+            rows = cursor.fetchall()
+            for row in rows:
+                exposures[row['id']]['numcopyout'] = row['numcopyout']
+                
             sql = ( "SELECT e.id AS id,COUNT(p.id) AS numerrors "
                     "FROM temp_find_exposures e "
                     "INNER JOIN processcheckpoints p ON p.exposure_id=e.id "
@@ -351,8 +364,8 @@ class ExposureLog(HandlerBase):
 class Cutouts(HandlerBase):
     def get_cutouts( self, expid=None, candid=None, sort="rb", rbtype=None, offset=None, limit=None,
                      mingallat=None, maxgallat=None, onlyvetted=False, proposals=None, notvettedby=None ):
-        q = ( self.db.db.query( db.Object, db.Subtraction.ccdnum,
-                                db.Exposure.filename, db.Exposure.mjd, db.Exposure.proposalid, db.Exposure.filter )
+        q = ( self.db.db.query( db.Object, db.Subtraction.ccdnum, db.Subtraction.magzp,
+                                db.Exposure.filename, db.Exposure.mjd, db.Exposure.proposalid,db.Exposure.filter )
               .join( db.Subtraction, db.Subtraction.id==db.Object.subtraction_id )
               .join( db.Exposure, db.Exposure.id==db.Subtraction.exposure_id ) )
         if onlyvetted:
@@ -378,7 +391,7 @@ class Cutouts(HandlerBase):
 
         if onlyvetted:
             # Throw this in to avoid getting duplicate objects
-            q = q.group_by( db.Object, db.Subtraction.ccdnum, db.Exposure.filename,
+            q = q.group_by( db.Object, db.Subtraction.ccdnum, db.Subtraction.magzp, db.Exposure.filename,
                             db.Exposure.mjd, db.Exposure.proposalid, db.Exposure.filter )
             
         if sort == "random":
@@ -392,7 +405,7 @@ class Cutouts(HandlerBase):
         objids =[]
         objs = {}
         for row in objres:
-            obj, ccdnum, filename, mjd, propid, band = row
+            obj, ccdnum, zp, filename, mjd, propid, band = row
             objids.append( obj.id )
             objs[ obj.id ] = {
                 "object_id": obj.id,
@@ -402,6 +415,7 @@ class Cutouts(HandlerBase):
                 "filename": filename,
                 "mjd": mjd,
                 "proposalid": propid,
+                "zp": zp,
                 "ccdnum": ccdnum,
                 "filter": band,
                 "flux": obj.flux,
