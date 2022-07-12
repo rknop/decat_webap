@@ -372,9 +372,14 @@ class Cutouts(HandlerBase):
             # Just joining should limit this, as it's an inner join
             q = q.join( db.ScanScore, db.ScanScore.object_id==db.Object.id )
             if notvettedby is not None:
+                selfscore = sa.orm.aliased( db.ScanScore )
                 # This won't omit things already vetted by the user, it just makes sure
                 #  to get things that have been vetted by somebody else
                 q = q.filter( db.ScanScore.username != notvettedby )
+                # Now try to filter out  things vetted by the ser
+                q = q.outerjoin( selfscore, sa.and_( selfscore.username == notvettedby,
+                                                     selfscore.object_id==db.Object.id ) )
+                q = q.filter( selfscore.username == None )
 
         if expid is not None:
             q = q.filter( db.Exposure.id == expid )
