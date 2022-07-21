@@ -39,11 +39,11 @@ decatview.Context.prototype.init = function() {
         "startdate": { "value": "",
                        "use": false,
                        "desc": "Search objects detected starting: ",
-                       "note": "GMT; yyyy-mm-dd or yyyy-mm-dd hh:mm:ss" },
+                       "note": "GMT; yyyy-mm-dd or yyyy-mm-dd hh:mm:ss or mjd" },
         "enddate" : { "value": "",
                       "use": false,
                       "desc": "Search objects detected ending: ",
-                      "note": "GMT; yyyy-mm-dd or yyyy-mm-dd hh:mm:ss" },
+                      "note": "GMT; yyyy-mm-dd or yyyy-mm-dd hh:mm:ss or mjd" },
         "sncut" : { "value": 5,
                     "use": false,
                     "type": "number",
@@ -58,11 +58,11 @@ decatview.Context.prototype.init = function() {
         "startcount": { "value": "",
                         "use": false,
                         "desc": "Filter detection counts starting: ",
-                        "note": "GMT; yyyy-mm-dd or yyyy-mm-dd hh:mm:ss" },
+                        "note": "GMT; yyyy-mm-dd or yyyy-mm-dd hh:mm:ss or mjd" },
         "endcount": { "value": "",
                       "use": false,
                       "desc": "Filter detection counts ending: ",
-                      "note": "GMT; yyyy-mm-dd or yyyy-mm-dd hh:mm:ss" },
+                      "note": "GMT; yyyy-mm-dd or yyyy-mm-dd hh:mm:ss or mjd" },
         "diffdays" : { "value": 3,
                        "use": false,
                        "type": "number",
@@ -555,6 +555,17 @@ decatview.Context.prototype.renderVettingStart = function( div ) {
                       } );
     td = rkWebUtil.elemaker( "td", tr, { "attributes": { "colspan": 2 },
                                          "text": "(This may take several seconds, be patient.)" } );
+
+    rkWebUtil.elemaker( "h4", div, { "text": "Vetting Stats" } );
+    this.vettingtable = rkWebUtil.elemaker( "table", div, { "classes": [ "candsearchparams" ] } );
+    tr = rkWebUtil.elemaker( "tr", this.vettingtable );
+    td = rkWebUtil.elemaker( "td", tr, { "text": "Your exgal:" } )
+    this.exgalyouvevetted = rkWebUtil.elemaker( "td", tr, { "classes": [ "warning" ], "text": "...loading..." } );
+    tr = rkWebUtil.elemaker( "tr", this.vettingtable );
+    td = rkWebUtil.elemaker( "td", tr, { "text": "Your gal:" } )
+    this.galyouvevetted = rkWebUtil.elemaker( "td", tr, { "classes": [ "warning" ], "text": "...loading..." } );
+
+    this.connector.sendHttpRequest( "getvetstats", {}, function( data ) { self.renderVetStats( data ) } );
 }
 
 // **********************************************************************
@@ -595,6 +606,43 @@ decatview.Context.prototype.updateSelectedProposals = function( propprefix ) {
     }
 }
 
+
+// **********************************************************************
+
+decatview.Context.prototype.renderVetStats = function( data ) {
+    var tr;
+    
+    rkWebUtil.wipeDiv( this.exgalyouvevetted );
+    rkWebUtil.wipeDiv( this.galyouvevetted );
+    this.exgalyouvevetted.classList.remove( "warning" );
+    this.galyouvevetted.classList.remove( "warning" );
+    this.exgalyouvevetted.appendChild( document.createTextNode( data.youexgal ) );
+    this.galyouvevetted.appendChild( document.createTextNode( data.yougal ) );
+
+    tr = rkWebUtil.elemaker( "tr", this.vettingtable );
+    rkWebUtil.elemaker( "th", tr, { "text": "Extragalactic Counts", "attributes": { "colspan": 2 } } );
+    tr = rkWebUtil.elemaker( "tr", this.vettingtable );
+    rkWebUtil.elemaker( "th", tr, { "text": "N. Vets" } );
+    rkWebUtil.elemaker( "th", tr, { "text": "N. Objects" } );
+
+    for ( let nexgal of data['nexgal'] ) {
+        tr = rkWebUtil.elemaker( "tr", this.vettingtable );
+        rkWebUtil.elemaker( "td", tr, { "text": nexgal[0] } );
+        rkWebUtil.elemaker( "td", tr, { "text": nexgal[1] } );
+    }
+        
+    tr = rkWebUtil.elemaker( "tr", this.vettingtable );
+    rkWebUtil.elemaker( "th", tr, { "text": "Galactic Counts", "attributes": { "colspan": 2 } } );
+    tr = rkWebUtil.elemaker( "tr", this.vettingtable );
+    rkWebUtil.elemaker( "th", tr, { "text": "N. Vets" } );
+    rkWebUtil.elemaker( "th", tr, { "text": "N. Objects" } );
+    
+    for ( let ngal of data['ngal'] ) {
+        tr = rkWebUtil.elemaker( "tr", this.vettingtable );
+        rkWebUtil.elemaker( "td", tr, { "text": ngal[0] } );
+        rkWebUtil.elemaker( "td", tr, { "text": ngal[1] } );
+    }
+}
 
 // **********************************************************************
 

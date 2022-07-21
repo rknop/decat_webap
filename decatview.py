@@ -248,12 +248,12 @@ class FindExposures(HandlerBase):
                         "WHERE r.rbtype_id=%(rbtype)s AND r.rb>=%(rbcut)s "
                         "GROUP BY e.id" )
                 subs = { 'rbtype': rbtype, 'rbcut': rbcut }
-                sys.stderr.write( f"Sending query: {sql}\n" )
-                sys.stderr.write( f"Subs: {subs}\n" )
+                # sys.stderr.write( f"Sending query: {sql}\n" )
+                # sys.stderr.write( f"Subs: {subs}\n" )
                 cursor = conn.cursor( cursor_factory=psycopg2.extras.DictCursor )
                 cursor.execute( sql, subs )
                 rows = cursor.fetchall()
-                sys.stderr.write( f"Got {len(rows)} results\n" )
+                # sys.stderr.write( f"Got {len(rows)} results\n" )
                 for row in rows:
                     exposures[row['id']][f"numhighrb{rbtype}"] = row['numhighrb']
 
@@ -364,13 +364,20 @@ class ExposureLog(HandlerBase):
 class Cutouts(HandlerBase):
     def get_cutouts( self, expid=None, candid=None, sort="rb", rbtype=None, offset=None, limit=None,
                      mingallat=None, maxgallat=None, onlyvetted=False, proposals=None, notvettedby=None ):
-        q = ( self.db.db.query( db.Object, db.Subtraction.ccdnum, db.Subtraction.magzp,
-                                db.Exposure.filename, db.Exposure.mjd, db.Exposure.proposalid,db.Exposure.filter )
-              .join( db.Subtraction, db.Subtraction.id==db.Object.subtraction_id )
-              .join( db.Exposure, db.Exposure.id==db.Subtraction.exposure_id ) )
-        if onlyvetted:
+        if not onlyvetted:
+            q = ( self.db.db.query( db.Object, db.Subtraction.ccdnum, db.Subtraction.magzp,
+                                    db.Exposure.filename, db.Exposure.mjd, db.Exposure.proposalid,db.Exposure.filter,
+                                    sa.sql.expression.bindparam ( "nscores", 0 ) )
+                  .join( db.Subtraction, db.Subtraction.id==db.Object.subtraction_id )
+                  .join( db.Exposure, db.Exposure.id==db.Subtraction.exposure_id ) )
+        else:
             # Just joining should limit this, as it's an inner join
-            q = q.join( db.ScanScore, db.ScanScore.object_id==db.Object.id )
+            q = ( self.db.db.query( db.Object, db.Subtraction.ccdnum, db.Subtraction.magzp,
+                                    db.Exposure.filename, db.Exposure.mjd, db.Exposure.proposalid,db.Exposure.filter,
+                                    sa.func.count(db.ScanScore.id).label('nscores') )
+                  .join( db.Subtraction, db.Subtraction.id==db.Object.subtraction_id )
+                  .join( db.Exposure, db.Exposure.id==db.Subtraction.exposure_id )
+                  .join( db.ScanScore, db.ScanScore.object_id==db.Object.id ) )
             if notvettedby is not None:
                 selfscore = sa.orm.aliased( db.ScanScore )
                 # This won't omit things already vetted by the user, it just makes sure
@@ -399,18 +406,25 @@ class Cutouts(HandlerBase):
             q = q.group_by( db.Object, db.Subtraction.ccdnum, db.Subtraction.magzp, db.Exposure.filename,
                             db.Exposure.mjd, db.Exposure.proposalid, db.Exposure.filter )
             
-        if sort == "random":
-            q = q.order_by( sa.func.random() )
+        if sort == "manyscore_random":
+            if onlyvetted:
+                q = q.order_by( sa.desc( sa.text('nscores') ), sa.func.random() )
+            else:
+                q = q.order_by( sa.func.random() )
             if limit is not None:
                 q = q.limit( limit )
 
+        # ****
+        # sys.stderr.write( f"Sending query: {str(q)}\n" )
+        # ****
+        
         objres = q.all()
         totnobjs = len(objres)
 
         objids =[]
         objs = {}
         for row in objres:
-            obj, ccdnum, zp, filename, mjd, propid, band = row
+            obj, ccdnum, zp, filename, mjd, propid, band, nscores = row
             objids.append( obj.id )
             objs[ obj.id ] = {
                 "object_id": obj.id,
@@ -427,6 +441,7 @@ class Cutouts(HandlerBase):
                 "fluxerr": obj.fluxerr,
                 "mag": obj.mag,
                 "magerr": obj.magerr,
+                "nscores": nscores,
                 "rb": None,
                 "sci_jpeg": None,
                 "ref_jpeg": None,
@@ -445,7 +460,7 @@ class Cutouts(HandlerBase):
             objids.sort( key=lambda i: ( 9999 if objs[i]['rb'] is None else -objs[i]['rb'], i ) )
         elif sort == "mjd":
             objids.sort( key=lambda i: objs[i]['mjd'] )
-        elif sort == "random":
+        elif sort == "manyscore_random":
             # Already sorted
             pass
         else:
@@ -474,6 +489,13 @@ class Cutouts(HandlerBase):
                     "offset": start,
                     "num": end-start,
                     "objs": [ objs[i] for i in objids  ] }
+
+        # ****
+        # sys.stderr.write( f"results['objs'][0].keys() = {results['objs'][0].keys()}\n" )
+        # for obj in results['objs']:
+        #     sys.stderr.write( f"Showing cutouts for object {obj['object_id']} ( {obj['nscores']} scores )\n" )
+        # ****
+            
         return results
         
 
@@ -542,10 +564,12 @@ class SearchCandidates(HandlerBase):
                 conds.append( f"e.mjd>=%(startdate)s" )
                 d = util.asDateTime( data['startdate'] )
                 subs['startdate'] = util.mjd( d.year, d.month, d.day, d.hour, d.minute, d.second )
+                sys.stderr.write( f"Got startdate {d} from {data['startdate']}, translated to mjd {subs['startdate']}\n" )
             if data['useenddate']:
                 conds.append( f"e.mjd<=%(enddate)s" )
                 d = util.asDateTime( data['enddate'] )
                 subs['enddate'] = util.mjd( d.year, d.month, d.day, d.hour, d.minute, d.second )
+                sys.stderr.write( f"Got enddate {d} from {data['enddate']}, translated to mjd {subs['enddate']}\n" )
             if data['usegallatmin']:
                 conds.append( f"( e.gallat>%(gallatmin)s OR e.gallat<%(neggallatmin)s )" )
                 subs['gallatmin'] = data['gallatmin']
@@ -588,12 +612,14 @@ class SearchCandidates(HandlerBase):
                 d = util.asDateTime( data['startcount'] )
                 dateconds.append( "e.mjd>=%(startcount)s" )
                 subs['startcount'] = util.mjd( d.year, d.month, d.day, d.hour, d.minute, d.second )
+                sys.stderr.write( f"Got startcount {d} from {data['startcount']}, translated to mjd {subs['startcount']}\n" )
             elif data['usestartdate']:
                 dateconds.append( "e.mjd>=%(startdate)s" )
             if data['useendcount']:
                 d = util.asDateTime( data['endcount'] )
                 dateconds.append( "e.mjd<=%(endcount)s" )
                 subs['endcount'] = util.mjd( d.year, d.month, d.day, d.hour, d.minute, d.second )
+                sys.stderr.write( f"Got startcount {d} from {data['endcount']}, translated to mjd {subs['endcount']}\n" )
             elif data['useenddate']:
                 dateconds.append( "e.mjd<=%(enddate)s" )
 
@@ -825,7 +851,7 @@ class GetObjectsToVet(Cutouts):
             onlyvetted = data[ "alreadyvetted" ] == "Yes"
 
             # Get objects and cutouts
-            results = self.get_cutouts( sort="random", limit=100, mingallat=mingallat, maxgallat=maxgallat,
+            results = self.get_cutouts( sort="manyscore_random", limit=100, mingallat=mingallat, maxgallat=maxgallat,
                                         onlyvetted=onlyvetted, notvettedby=web.ctx.session.username )
             # Get user's current vet status
             q = ( self.db.db.query( db.ScanScore )
@@ -886,6 +912,60 @@ class SetGoodBad(Cutouts):
 
 # ======================================================================
 
+class GetVetStats(HandlerBase):
+    def do_the_things( self ):
+        try:
+            self.jsontop()
+            self.verifyauth()
+            res = { 'yougal': 0,
+                    'youexgal': 0,
+                    'ngal': [],
+                    'nexgal': []
+                    }
+            qbase = self.db.db.query( sa.func.count(db.ScanScore.object_id).label("n") )
+            qbase = qbase.join( db.Object, db.ScanScore.object_id==db.Object.id )
+            qbase = qbase.join( db.Subtraction, db.Object.subtraction_id==db.Subtraction.id )
+            qbase = qbase.join( db.Exposure, db.Subtraction.exposure_id==db.Exposure.id )
+            qbase = qbase.filter( db.ScanScore.username==web.ctx.session.username )
+
+            for which in [ 'yougal', 'youexgal' ]:
+                if which == 'yougal':
+                    q = qbase.filter( db.Exposure.gallat < 20 ).filter( db.Exposure.gallat > -20 )
+                else:
+                    q = qbase.filter( sa.or_( db.Exposure.gallat >= 20, db.Exposure.gallat <= -20 ) )
+                sys.stderr.write( f"{which} query: {str(q)}\n" )
+                them = q.all()
+                sys.stderr.write( f"{which} query returned {[ it for it in them]}\n" )
+                if ( len(them) > 1 ):
+                    sys.stderr.write( f"ERROR: got {len(them)} from vet count query!" )
+                if ( len(them) == 0 ):
+                    res[which] = 0
+                else:
+                    res[which] = int( them[0][0] )
+
+            qbase = self.db.db.query( db.ScanScore.object_id.label("oid"),
+                                      sa.func.count(db.ScanScore.id).label("nvet") )
+            qbase = qbase.join( db.Object, db.ScanScore.object_id==db.Object.id )
+            qbase = qbase.join( db.Subtraction, db.Object.subtraction_id==db.Subtraction.id )
+            qbase = qbase.join( db.Exposure, db.Subtraction.exposure_id==db.Exposure.id )
+
+            for which in [ 'ngal', 'nexgal' ]:
+                if which == 'ngal':
+                    subq = qbase.filter( db.Exposure.gallat < 20 ).filter( db.Exposure.gallat > -20 )
+                else:
+                    subq = qbase.filter( sa.or_( db.Exposure.gallat >= 20, db.Exposure.gallat <= -20 ) )
+                subq = subq.group_by( db.ScanScore.object_id ).subquery()
+                
+                q = self.db.db.query( subq.c.nvet, sa.func.count(subq.c.oid).label("n") ).group_by( subq.c.nvet )
+                res[which] = [ tuple(row) for row in q.all() ]
+                res[which].sort( key=lambda item: -item[0] )
+                
+            return json.dumps(res )
+        except Exception as e:
+            return logerr( self.__class__, e )
+
+# ======================================================================
+
 urls = (
     '/', "FrontPage",
     '/cand/(.+)', "ShowCand",
@@ -898,6 +978,7 @@ urls = (
     '/searchcands', "SearchCandidates",
     '/getobjstovet', "GetObjectsToVet",
     '/setgoodbad', "SetGoodBad",
+    '/getvetstats', "GetVetStats",
     "/auth", auth.app
     )
 

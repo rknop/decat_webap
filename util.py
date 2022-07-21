@@ -1,7 +1,7 @@
 import sys
 import math
 import re
-from datetime import datetime
+import datetime
 import dateutil.parser
 import pytz
 
@@ -16,6 +16,8 @@ ltendfinder = re.compile("<([^>]*)$")
 gtfinder = re.compile("((?<!\<a)\s[^<]*)>")
 gtstartfinder = re.compile("^([<]*)>");
 
+mjdre = re.compile( "^\s*\d{5}\.?\d*\s*$" )
+
 class ErrorMsg(Exception):
     def __init__( self, text="error" ):
         self.text = text
@@ -24,12 +26,13 @@ def asDateTime( string ):
     try:
         if string is None:
             return None
-        if isinstance( string, datetime ):
+        if isinstance( string, datetime.datetime ):
             return string
         string = string.strip()
-        # sys.stderr.write( f'Looking at "{string}" with length {len(string)}\n' )
         if len(string) == 0:
             return None
+        if mjdre.search( string ):
+            return mjdtodatetime( float(string) )
         dateval = dateutil.parser.parse( string )
         return dateval
     except Exception as e:
@@ -169,4 +172,15 @@ def dateofmjd( mjd ):
     D = ( h % s ) // u + 1
     M = ( ( h // s + m ) % n ) + 1
     Y = (e // p) - y + (n + m - M) // n
-    return (Y,M,D)
+    return (int(Y), int(M) ,int(D))
+
+def mjdtodatetime( modjuldat ):
+    Y, M, D = dateofmjd( modjuldat )
+    secs = ( modjuldat - math.floor( modjuldat ) ) * 24 * 3600
+    h = int( math.floor( secs / 3600 ) )
+    m = int( math.floor( ( secs - 3600*h ) / 60 ) )
+    s = int( secs - 3600*h - 60*m )
+    mus = int( 1e6 * ( secs - 3600*h - 60*m - s ) + 0.5 )
+    return datetime.datetime( Y, M, D, h, m, s, mus, tzinfo=datetime.timezone.utc )
+
+    
