@@ -130,6 +130,27 @@ class ShowCand(HandlerBase):
 
 # ======================================================================
 
+class GetCameraChips(HandlerBase):
+    def do_the_things( self, camid ):
+        try:
+            self.jsontop()
+            camerachips = []
+            ccs = ( self.db.db.query( db.CameraChip )
+                    .filter( db.CameraChip.camera_id==camid )
+                    .order_by( db.CameraChip.chipnum ) )
+            for cc in ccs:
+                thiscc = {}
+                for column in cc.__table__.columns:
+                    thiscc[column.name] = getattr( cc, column.name )
+                camerachips.append( thiscc )
+            return json.dumps( { "status": "ok",
+                                 "camera_id": camid,
+                                 "camerachips": camerachips } )
+        except Exception as e:
+            return logerr( self.__class__, e )
+
+# ======================================================================
+
 class GetRBTypes(HandlerBase):
     def do_the_things( self ):
         try:
@@ -149,6 +170,23 @@ class GetRBTypes(HandlerBase):
 
 # ======================================================================
 
+class GetVersionTags(HandlerBase):
+    def do_the_things( self ):
+        try:
+            self.jsontop()
+            versiontags = []
+            vts = self.db.db.query( db.VersionTag ).order_by( db.VersionTag.id )
+            for vt in vts:
+                versiontags.append( {'id': vt.id,
+                                     'tag': vt.tag,
+                                     'description': vt.description } )
+            return json.dumps( { "status": "ok",
+                                 "versiontags": versiontags } )
+        except Exception as e:
+            return logerr( self.__class__, e )
+
+# ======================================================================
+
 class FindExposures(HandlerBase):
     checkpointerrorvalue = 999
     checkpointdonevalue = 27
@@ -162,14 +200,15 @@ class FindExposures(HandlerBase):
             data = json.loads( web.data() )
             t0 = util.asDateTime( data['t0'] )
             t1 = util.asDateTime( data['t1'] )
+            versiontag = data[ 'versiontagid' ]
 
-            sql = ( "SELECT e.id AS id,e.filename AS filename,e.filter AS filter,e.proposalid AS proposalid,"
+            sys.stderr.write( "Finding exposures...\n" )
+            
+            sql = ( "SELECT e.id AS id,e.filename AS filename,e.proposalid AS proposalid,"
                     "e.header->'EXPTIME' AS exptime,e.ra AS ra,e.dec AS dec,e.gallat AS gallat,"
-                    "e.gallong AS gallong,COUNT(DISTINCT s.id) AS numsubs,COUNT(o.id) AS numobjs "
+                    "e.gallong AS gallong "
                     "INTO TEMP TABLE temp_find_exposures "
-                    "FROM exposures e "
-                    "LEFT JOIN subtractions s ON e.id=s.exposure_id "
-                    "LEFT JOIN objects o ON o.subtraction_id=s.id " )
+                    "FROM exposures e " )
             clauses = []
             subs = {}
             if t0 is not None:
@@ -189,7 +228,6 @@ class FindExposures(HandlerBase):
                 subs['props'] = tuple( data['props'] )
             if len(clauses) > 0:
                 sql += "WHERE " + " AND ".join(clauses)
-            sql += " GROUP BY e.id,e.filename,e.filter,e.proposalid,e.header,e.ra,e.dec,e.gallat,e.gallong "
             sql += "ORDER BY e.mjd"
 
             cursor = conn.cursor( cursor_factory=psycopg2.extras.DictCursor )
@@ -200,118 +238,130 @@ class FindExposures(HandlerBase):
             exposures = {}
             for row in rows:
                 exposures[row['id']] = dict(row)
+                exposures[row['id']]['filter'] = 'unknown'
+                exposures[row['id']]['numimages'] = 0
+                exposures[row['id']]['numsubs'] = 0
                 exposures[row['id']]['numdone'] = 0
+                exposures[row['id']]['numobjs'] = 0
+                exposures[row['id']]['numcopyout'] = 0
                 exposures[row['id']]['numerrors'] = 0
 
-            sql = ( "SELECT e.id AS id,COUNT(p.id) AS numdone "
-                    "FROM temp_find_exposures e "
-                    "INNER JOIN processcheckpoints p ON p.exposure_id=e.id "
-                    "WHERE p.event_id=%(donevalue)s "
-                    "GROUP BY e.id")
-            subs = { 'donevalue': self.checkpointdonevalue }
-            cursor = conn.cursor( cursor_factory=psycopg2.extras.DictCursor )
-            cursor.execute( sql, subs )
+            sys.stderr.write( "...counting images...\n" )
+            
+            sql = ( "SELECT t.id,i.filter,COUNT(DISTINCT i.id) AS nimages "
+                    "FROM temp_find_exposures t "
+                    "INNER JOIN images i ON i.exposure_id=t.id "
+                    "GROUP BY t.id,i.filter " )
+            cursor.execute( sql )
             rows = cursor.fetchall()
             for row in rows:
-                exposures[row['id']]['numdone'] = row['numdone']
+                exposures[row['id']]['filter'] = row['filter']
+                exposures[row['id']]['numimages'] = row['nimages']
 
-            sql = ( "SELECT e.id AS id,COUNT(p.id) AS numcopyout "
-                    "FROM temp_find_exposures e "
-                    "INNER JOIN processcheckpoints p ON p.exposure_id=e.id "
-                    "WHERE p.event_id=%(copyoutvalue)s "
-                    "GROUP BY e.id")
-            subs = { 'copyoutvalue': self.checkpointcopyoutvalue }
-            cursor = conn.cursor( cursor_factory=psycopg2.extras.DictCursor )
-            cursor.execute( sql, subs )
+            sys.stderr.write( "...counting subtractions & done...\n" )
+            
+            # Doing this in a separate query so that we will count images
+            # that don't have subtractions.  (Could I have done this in one
+            # query with a LEFT JOIN on subtractions?)
+            sql = ( "SELECT t.id,COUNT(DISTINCT s.id) AS nsubs,COUNT(c.id) AS ndone,COUNT(c2.id) AS ncopy "
+                    "FROM temp_find_exposures t "
+                    "INNER JOIN images i ON i.exposure_id=t.id "
+                    "INNER JOIN subtractions s ON s.image_id=i.id AND s.complete=TRUE "
+                    "INNER JOIN subtraction_versiontag v ON v.subtraction_id=s.id AND v.versiontag_id=%(versiontag)s "
+                    "LEFT JOIN processcheckpoints c ON c.subtraction_id=s.id AND c.event_id=%(done)s "
+                    "LEFT JOIN processcheckpoints c2 ON c2.subtraction_id=s.id AND c.event_id=%(copy)s "
+                    "GROUP BY t.id " )
+            cursor.execute( sql, { "versiontag": versiontag,
+                                   "done": self.checkpointdonevalue,
+                                   "copy": self.checkpointcopyoutvalue } )
             rows = cursor.fetchall()
             for row in rows:
-                exposures[row['id']]['numcopyout'] = row['numcopyout']
+                exposures[row['id']]['numsubs'] = row['nsubs']
+                exposures[row['id']]['numdone'] = row['ndone']
+                exposures[row['id']]['numcopyout'] = row['ncopy']
                 
-            sql = ( "SELECT e.id AS id,COUNT(p.id) AS numerrors "
-                    "FROM temp_find_exposures e "
-                    "INNER JOIN processcheckpoints p ON p.exposure_id=e.id "
-                    "WHERE p.event_id=%(errorvalue)s "
-                    "GROUP BY e.id" )
-            subs = { 'errorvalue': self.checkpointerrorvalue }
-            cursor = conn.cursor( cursor_factory=psycopg2.extras.DictCursor )
-            cursor.execute( sql, subs )
+            sys.stderr.write( "...counting objectdatas...\n" )
+
+            # And yet another query so that in the previous query we would
+            # have counted subtractions that don't have any objects.
+            # (The inner join would have gotten rid of that, I think.)
+            sql = ( "SELECT t.id,COUNT(o.id) AS nobjs "
+                    "FROM temp_find_exposures t "
+                    "INNER JOIN images i ON i.exposure_id=t.id "
+                    "INNER JOIN subtractions s ON s.image_id=i.id "
+                    "INNER JOIN objectdatas o ON o.subtraction_id=s.id "
+                    "INNER JOIN objectdata_versiontag v ON v.objectdata_id=o.id "
+                    "WHERE v.versiontag_id=%(versiontag)s "
+                    "GROUP BY t.id " )
+            cursor.execute( sql, { "versiontag": versiontag } )
             rows = cursor.fetchall()
             for row in rows:
-                exposures[row['id']]['numerrors'] = row['numerrors']
+                exposures[row['id']]['numobjs'] = row['nobjs']
 
+            sys.stderr.write( "...counting high rb...\n" )
+
+            # ...and yet another...
             for rbtype, rbcut in zip( data['rbtypes'], data['rbcuts'] ):
-                sql = ( "SELECT e.id AS id,COUNT(o.id) AS numhighrb "
-                        "FROM temp_find_exposures e "
-                        "INNER JOIN subtractions s ON e.id=s.exposure_id "
-                        "INNER JOIN objects o ON s.id=o.subtraction_id "
-                        "INNER JOIN objectrbs r ON o.id=r.object_id "
-                        "WHERE r.rbtype_id=%(rbtype)s AND r.rb>=%(rbcut)s "
-                        "GROUP BY e.id" )
-                subs = { 'rbtype': rbtype, 'rbcut': rbcut }
-                # sys.stderr.write( f"Sending query: {sql}\n" )
-                # sys.stderr.write( f"Subs: {subs}\n" )
-                cursor = conn.cursor( cursor_factory=psycopg2.extras.DictCursor )
-                cursor.execute( sql, subs )
+                sql = ( "SELECT t.id,COUNT(o.id) AS nhighrb "
+                        "FROM temp_find_exposures t "
+                        "INNER JOIN images i ON i.exposure_id=t.id "
+                        "INNER JOIN subtractions s ON s.image_id=i.id "
+                        "INNER JOIN objectdatas o ON o.subtraction_id=s.id "
+                        "INNER JOIN objectdata_versiontag v ON v.objectdata_id=o.id "
+                        "INNER JOIN objectrbs r ON r.objectdata_id=o.id "
+                        "WHERE v.versiontag_id=%(versiontag)s AND r.rbtype_id=%(rbtype)s AND r.rb>=%(rbcut)s "
+                        "GROUP BY t.id " )
+                cursor.execute( sql, { "versiontag": versiontag, "rbtype": rbtype, "rbcut": rbcut } )
                 rows = cursor.fetchall()
-                # sys.stderr.write( f"Got {len(rows)} results\n" )
                 for row in rows:
-                    exposures[row['id']][f"numhighrb{rbtype}"] = row['numhighrb']
+                    exposures[row['id']][f'numhighrb{rbtype}'] = row['nhighrb']
 
+            sys.stderr.write( "...counting errors...\n" )
+
+            # ...finally, count errors; do this in three passes for sanity...
+            # (I first tried to be all fancy with left joins, but was getting
+            # duplicats, so threw my hands up and said whatever.)
+
+            sql = ( "SELECT t.id,COUNT(c.id) AS nerr "
+                    "FROM temp_find_exposures t "
+                    "INNER JOIN processcheckpoints c ON c.exposure_id=t.id "
+                    "WHERE c.event_id=%(error)s "
+                    "GROUP BY t.id " )
+            cursor.execute( sql, { "error": self.checkpointerrorvalue } )
+            rows = cursor.fetchall()
+            for row in rows:
+                exposures[row['id']]['numerrors'] += row['nerr']
+
+            sql = ( "SELECT t.id,COUNT(c.id) AS nerr "
+                    "FROM temp_find_exposures t "
+                    "INNER JOIN images i ON i.exposure_id=t.id "
+                    "INNER JOIN processcheckpoints c ON c.image_id=i.id "
+                    "WHERE c.event_id=%(error)s "
+                    "GROUP BY t.id " )
+            cursor.execute( sql, { "error": self.checkpointerrorvalue } )
+            rows = cursor.fetchall()
+            for row in rows:
+                exposures[row['id']]['numerrors'] += row['nerr']
+
+            sql = ( "SELECT t.id,COUNT(c.id) AS nerr "
+                    "FROM temp_find_exposures t "
+                    "INNER JOIN images i ON i.exposure_id=t.id "
+                    "INNER JOIN subtractions s ON s.image_id=i.id "
+                    "INNER JOIN subtraction_versiontag v ON v.subtraction_id=s.id AND v.versiontag_id=%(ver)s "
+                    "INNER JOIN processcheckpoints c ON c.subtraction_id=s.id "
+                    "WHERE c.event_id=%(error)s "
+                    "GROUP BY t.id " )
+            cursor.execute( sql, { "error": self.checkpointerrorvalue, "ver": versiontag } )
+            rows = cursor.fetchall()
+            for row in rows:
+                exposures[row['id']]['numerrors'] += row['nerr']
+
+            sys.stderr.write( "...done finding exposures.\n" )
+
+            cursor.close()
             return json.dumps( { "status": "ok",
                                  "exposures": [ val for key, val in exposures.items() ] } )
 
-            # errorchk = sa.orm.aliased( db.ProcessCheckpoint )
-            # donechk = sa.orm.aliased( db.ProcessCheckpoint )
-            # q = self.db.db.query( db.Exposure, sa.func.count(sa.distinct(db.Subtraction.id)),
-            #                       sa.func.count(sa.distinct(errorchk.id)),
-            #                       sa.func.count(sa.distinct(db.Object.id)),
-            #                       sa.func.count(sa.distinct(db.ObjectRB.id)),
-            #                       sa.func.count(sa.distinct(donechk.id)) )
-            # q = q.join( db.Subtraction, db.Exposure.id==db.Subtraction.exposure_id, isouter=True )
-            # q = q.join( errorchk, sa.and_( db.Exposure.id==errorchk.exposure_id,
-            #                                errorchk.event_id==self.checkpointerrorvalue ),
-            #             isouter=True )
-            # q = q.join( donechk, sa.and_( db.Exposure.id==donechk.exposure_id,
-            #                               donechk.event_id==self.checkpointdonevalue ),
-            #             isouter=True )
-            # q = q.join( db.Object, db.Subtraction.id==db.Object.subtraction_id, isouter=True )
-            # q = q.join( db.ObjectRB, sa.and_( db.ObjectRB.object_id==db.Object.id,
-            #                                   db.ObjectRB.rbtype_id==data['rbtype'],
-            #                                   db.ObjectRB.rb>=data['rbcut'] ), isouter=True )
-            # if t0 is not None:
-            #     q = q.filter( db.Exposure.mjd >= util.mjd( t0.year, t0.month, t0.day, t0.hour, t0.minute, t0.second ) )
-            # if t1 is not None:
-            #     q = q.filter( db.Exposure.mjd <= util.mjd( t1.year, t1.month, t1.day, t1.hour, t1.minute, t1.second ) )
-            # if ( data['maxgallat'] is not None ) and ( float(data['maxgallat']) < 90 ):
-            #     q = q.filter( sa.and_( db.Exposure.gallat <= float(data['maxgallat']),
-            #                            db.Exposure.gallat >= -float(data['maxgallat']) ) )
-            # if ( data['mingallat'] is not None ) and ( float(data['mingallat']) > 0 ):
-            #     q = q.filter( sa.or_( db.Exposure.gallat >= float(data['mingallat']),
-            #                           db.Exposure.gallat <= -float(data['mingallat']) ) );
-            # if data['allorsomeprops'] != 'all':
-            #     q = q.filter( db.Exposure.proposalid.in_( data['props'] ) )
-            # q = q.group_by( db.Exposure )
-            # q = q.order_by( db.Exposure.mjd )
-            # res = q.all()
-            # exps = []
-            # for row in res:
-            #     exposure = row[0]
-            #     exps.append( { 'id': exposure.id,
-            #                    'filename': exposure.filename,
-            #                    'filter': exposure.filter,
-            #                    'proposalid': exposure.proposalid,
-            #                    'exptime': exposure.header['EXPTIME'],
-            #                    'ra': exposure.ra,
-            #                    'dec': exposure.dec,
-            #                    'gallat': exposure.gallat,
-            #                    'gallong': exposure.gallong,
-            #                    'numsubs': row[1],
-            #                    'numerrors': row[2],
-            #                    'numobjs': row[3],
-            #                    'numhighrbobjs': row[4],
-            #                    'numdone': row[5] } )
-            # return json.dumps( { "status": "ok",
-            #                      "exposures": exps } )
         except Exception as e:
             return logerr( self.__class__, e )
         finally:
@@ -338,23 +388,55 @@ class ExposureLog(HandlerBase):
     def do_the_things( self, expid ):
         try:
             self.jsontop()
-            q = ( self.db.db.query(db.ProcessCheckpoint)
-                  .filter( db.ProcessCheckpoint.exposure_id==expid )
-                  .order_by( db.ProcessCheckpoint.created_at, db.ProcessCheckpoint.ccdnum ) )
-            results = q.all()
-            res = { "status": "ok",
-                    "checkpoints": [] }
-            for chkpt in results:
-                res["checkpoints"].append(
-                    { "id": chkpt.id,
-                      "exposure_id": chkpt.exposure_id,
-                      "ccdnum": chkpt.ccdnum,
-                      "created_at": chkpt.created_at.isoformat(),
-                      "event_id": chkpt.event_id,
-                      "running_node": chkpt.running_node,
-                      "notes": chkpt.notes,
-                      "mpi_rank": chkpt.mpi_rank } )
-            return json.dumps( res )
+
+            #... I just find it easier to figure out joins using SQL rather than trying
+            # to figure out the more-byzantine way of doing it with SQLAlchemy
+
+            try:
+                conn = db.DB._engine.raw_connection()
+                cursor = conn.cursor( cursor_factory=psycopg2.extras.DictCursor )
+
+                q = ( "SELECT p.id,p.created_at,p.exposure_id,p.image_id,p.subtraction_id,i.ccdnum AS ccdnum,"
+                      " si.ccdnum AS subccdnum,p.event_id,p.running_node,p.mpi_rank,p.notes "
+                      "FROM processcheckpoints p "
+                      "LEFT JOIN images i ON p.image_id=i.id "
+                      "LEFT JOIN ( subtractions s INNER JOIN images si ON s.image_id=si.id ) ON p.subtraction_id=s.id "
+                      "WHERE p.exposure_id=%(expid)s OR i.exposure_id=%(expid)s OR si.exposure_id=%(expid)s "
+                      "ORDER BY p.created_at" )
+                cursor.execute( q, { "expid": expid } )
+                rows = cursor.fetchall()
+                res = { "status": "ok",
+                        "checkpoints": [] }
+                for chkpt in rows:
+                    res["checkpoints"].append( dict( chkpt ) )
+                    res["checkpoints"][-1]["created_at"] = chkpt["created_at"].isoformat()
+                cursor.close()
+                return json.dumps( res )
+            except Exception as e:
+                return logerr( self.__class__, e )
+            finally:
+                conn.close()
+                    
+
+            # This code is left over from when processcheckpoints only had
+            # exposure_id, and the joins weren't as complicated
+            # q = ( self.db.db.query(db.ProcessCheckpoint)
+            #       .filter( db.ProcessCheckpoint.exposure_id==expid )
+            #       .order_by( db.ProcessCheckpoint.created_at, db.ProcessCheckpoint.ccdnum ) )
+            # results = q.all()
+            # res = { "status": "ok",
+            #         "checkpoints": [] }
+            # for chkpt in results:
+            #     res["checkpoints"].append(
+            #         { "id": chkpt.id,
+            #           "exposure_id": chkpt.exposure_id,
+            #           "ccdnum": chkpt.ccdnum,
+            #           "created_at": chkpt.created_at.isoformat(),
+            #           "event_id": chkpt.event_id,
+            #           "running_node": chkpt.running_node,
+            #           "notes": chkpt.notes,
+            #           "mpi_rank": chkpt.mpi_rank } )
+            # return json.dumps( res )
         except Exception as e:
             return logerr( self.__class__, e )
 
@@ -914,6 +996,8 @@ class SetGoodBad(Cutouts):
 
 class GetVetStats(HandlerBase):
     def do_the_things( self ):
+        self.jsontop()
+        return json.dumps( { "error": "GetVetStats needs updating." } )
         try:
             self.jsontop()
             self.verifyauth()
@@ -924,7 +1008,7 @@ class GetVetStats(HandlerBase):
                     }
             qbase = self.db.db.query( sa.func.count(db.ScanScore.object_id).label("n") )
             qbase = qbase.join( db.Object, db.ScanScore.object_id==db.Object.id )
-            qbase = qbase.join( db.Subtraction, db.Object.subtraction_id==db.Subtraction.id )
+            qbase = qbase.join( db.Image, db.Object.image_id==db.Subtraction.id )
             qbase = qbase.join( db.Exposure, db.Subtraction.exposure_id==db.Exposure.id )
             qbase = qbase.filter( db.ScanScore.username==web.ctx.session.username )
 
@@ -969,7 +1053,9 @@ class GetVetStats(HandlerBase):
 urls = (
     '/', "FrontPage",
     '/cand/(.+)', "ShowCand",
+    '/getcamerachips/(.+)', "GetCameraChips",
     '/getrbtypes', "GetRBTypes",
+    '/getversiontags', "GetVersionTags",
     '/findexposures', "FindExposures",
     '/checkpointdefs', "CheckpointDefs",
     '/exposurelog/(.+)', "ExposureLog",

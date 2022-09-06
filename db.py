@@ -140,6 +140,12 @@ class HasPrimaryUUID(HasPrimaryID):
 
 # ======================================================================
 
+class CameraChip(Base,HasPrimaryID):
+    __tablename__ = "camerachips"
+
+class Cameras(Base,HasPrimaryID):
+    __tablename__ = "cameras"
+    
 class Candidate(Base,HasPrimaryID):
     __tablename__ = "candidates"
 
@@ -173,6 +179,9 @@ class ScanScore(Base,HasPrimaryID):
 class Subtraction(Base,HasPrimaryID):
     __tablename__ = "subtractions"
 
+class VersionTag(Base,HasPrimaryID):
+    __tablename__ = "versiontags"
+    
 # ======================================================================
 
 class User(Base,HasPrimaryUUID):

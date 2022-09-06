@@ -28,6 +28,7 @@ decatview.Context.prototype.init = function() {
     this.proposals = webapconfig.proposals;
     this.selectedproposals = webapconfig.defaultproposals;
     this.knownrbtypes = [];
+    this.versiontags = null;
     this.chosenrbtype_exgal = webapconfig.defaultrbtype_exgal;
     this.chosenrbtype_gal = webapconfig.defaultrbtype_gal;
     this.chosenrbtype_candsearch = webapconfig.defaultrbtype_exgal;
@@ -216,6 +217,48 @@ decatview.Context.prototype.render = function() {
 }
 
 // **********************************************************************
+// A dropdown widget for version tags
+
+decatview.Context.prototype.versiontagwid = function( parentelem ) {
+    var self=this;
+
+    var vtwid = rkWebUtil.elemaker( "select", parentelem );
+    if ( this.versiontags == null ) {
+        this.connector.sendHttpRequest( "getversiontags", {},
+                                        function( data ) { self.fillversiontagwid( data, vtwid ); } );
+    }
+    else {
+        this.fillversiontagwid( null, vtwid );
+    }
+    return vtwid;
+}
+
+decatview.Context.prototype.fillversiontagwid = function( data, vtwid ) {
+    if ( data != null ) {
+        if ( data.hasOwnProperty( "error") ) {
+            window.alert( "Error getting version tags: " + data["error"] + "; things are broken." );
+            return;
+        }
+        else if ( data["status"] != "ok" ) {
+            window.alert( "Unexpected response getting version tags; things are broken." );
+            return;
+        }
+        this.versiontags = data["versiontags"];
+    }
+    let first = true;
+    for ( let vt of this.versiontags ) {
+        console.log( "Adding version tag " + vt );
+        let option = rkWebUtil.elemaker( "option", vtwid,
+                                         { "attributes": { "value": vt.id },
+                                           "text": vt.tag + " — " + vt.description } );
+        if ( first ) {
+            option.setAttribute( "selected", "selected" );
+            first = false;
+        }
+    }
+}
+
+// **********************************************************************
 // A dropdown widget for selecting a set of proposals
 //
 // div is the parent element for the widgets
@@ -381,7 +424,10 @@ decatview.Context.prototype.renderExposureSearch = function( div ) {
     this.rbtypewid_gal = rkWebUtil.elemaker( "select", p, );
     rkWebUtil.elemaker( "span", p, { "text": "; for b≥20°: " } );
     this.rbtypewid_exgal = rkWebUtil.elemaker( "select", p, );
-                                         
+
+    p = rkWebUtil.elemaker( "p", div, { "text": "Version tag for counting subtractions, objects: " } );
+    this.exposuresearch_versiontagwid = this.versiontagwid( p );
+    
     this.proposalwid( div, "Include", "" );
 
     rkWebUtil.elemaker( "br", div );
@@ -407,9 +453,18 @@ decatview.Context.prototype.renderExposureSearch = function( div ) {
                           }
                           self.mingallat = self.mingallatwid.value;
                           self.maxgallat = self.maxgallatwid.value;
+                          let vtid = self.exposuresearch_versiontagwid.value;
+                          let vtdesc = null;
+                          for ( let i in self.versiontags ) {
+                              if ( vtid == self.versiontags[i].id ) {
+                                  vtdesc = self.versiontags[i].tag + " — " + self.versiontags[i].description;
+                                  break;
+                              }
+                          }
+                          self.exposuresearch_versiontag = vtid;
                           self.exposurelister = new ExposureList( div, self.startdate, self.enddate, rbinfo,
                                                                   proplist, self.mingallat, self.maxgallat,
-                                                                  self.connector );
+                                                                  vtid, vtdesc, self.connector );
                           self.exposurelister.render();
                       } );
 
@@ -422,6 +477,10 @@ decatview.Context.prototype.renderCandidateLookup = function( div ) {
     let h2, p;
     
     h2 = rkWebUtil.elemaker( "h2", div, { "text": "Candidate Lookup" } );
+
+    p = rkWebUtil.elemaker( "p", div, { "text": "Version tag for object data: " } );
+    this.candidatelookup_versiontagwid = this.versiontagwid( p );
+
     p = rkWebUtil.elemaker( "p", div );
     this.candidatelookupname = rkWebUtil.elemaker( "input", p, { "attributes": { "type": "text", "size": 12 } } );
     rkWebUtil.button( p, "Show Candidate", function() { self.lookupCandidate() } );
@@ -446,6 +505,9 @@ decatview.Context.prototype.renderCandidateSearch = function( div ) {
     p = rkWebUtil.elemaker( "p", div, { "text": "Use real/bogus type: " } );
     this.rbtypewid_candsearch = rkWebUtil.elemaker( "select", p );
 
+    p = rkWebUtil.elemaker( "p", div, { "text": "Use Version tag: " } );
+    this.candidatesearch_versiontagwid = this.versiontagwid( p );
+    
     this.proposalwid( div, "Search", "limit" );
     rkWebUtil.elemaker( "br", div );
     
@@ -542,6 +604,11 @@ decatview.Context.prototype.renderVettingStart = function( div ) {
         }
     }
     tr = rkWebUtil.elemaker( "tr", table );
+    td = rkWebUtil.elemaker( "td", tr, { "text": "Version tag:" } );
+    td = rkWebUtil.elemaker( "td", tr, { "classes": [ "left" ] } );
+    this.vet_versiontagwid = this.versiontagwid( td );
+    td.appendChild( document.createTextNode( " (Use \"latest\" if unsure.)" ) );
+    tr = rkWebUtil.elemaker( "tr", table );
     td = rkWebUtil.elemaker( "td", tr );
     rkWebUtil.button( td, "Show Objects",
                       function() {
@@ -554,6 +621,7 @@ decatview.Context.prototype.renderVettingStart = function( div ) {
                           self.vetter.render();
                       } );
     td = rkWebUtil.elemaker( "td", tr, { "attributes": { "colspan": 2 },
+                                         "classes": [ "left" ],
                                          "text": "(This may take several seconds, be patient.)" } );
 
     rkWebUtil.elemaker( "h4", div, { "text": "Vetting Stats" } );
