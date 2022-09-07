@@ -563,7 +563,7 @@ class Cutouts(HandlerBase):
                         q += "OFFSET %(offset)s "
                         subs['offset'] = offset
 
-            sys.stderr.write( f"Sending query: {str(q)}\n" )
+            # sys.stderr.write( f"Sending query: {str(q)}\n" )
             cursor.execute( q, subs )
             rows = cursor.fetchall()
             rows = [ dict(row) for row in rows ]
