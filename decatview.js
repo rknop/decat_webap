@@ -481,6 +481,8 @@ decatview.Context.prototype.renderCandidateLookup = function( div ) {
     p = rkWebUtil.elemaker( "p", div, { "text": "Version tag for object data: " } );
     this.candidatelookup_versiontagwid = this.versiontagwid( p );
 
+    p.appendChild( document.createTextNode( " (Currently ignored, just uses 'latest')" ) );
+    
     p = rkWebUtil.elemaker( "p", div );
     this.candidatelookupname = rkWebUtil.elemaker( "input", p, { "attributes": { "type": "text", "size": 12 } } );
     rkWebUtil.button( p, "Show Candidate", function() { self.lookupCandidate() } );

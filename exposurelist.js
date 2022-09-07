@@ -376,6 +376,7 @@ ExposureList.prototype.renderExposureObjects = function( data, rbinfo ) {
     var self = this;
     rkWebUtil.wipeDiv( this.abovecutoutdiv );
     rkWebUtil.wipeDiv( this.belowcutoutdiv );
+    rkWebUtil.elemaker( "p", this.abovecutoutdiv, { "text": "versiontag=" + data.versiontag } );
     rkWebUtil.elemaker( "p", this.abovecutoutdiv,
                         { "text": "Starting at object " + data.offset + " of " +
                           data.totnobjs + " objects.",

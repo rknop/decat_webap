@@ -75,7 +75,7 @@ CutoutList.prototype.render = function( cutoutdata )  {
         }
         if ( this.options.showfilename ) {
             rkWebUtil.elemaker( "br", td );
-            rkWebUtil.elemaker( "span", td, { "text": "File: " + data.filename } );
+            rkWebUtil.elemaker( "span", td, { "text": "File: " + data.basename } );
         }
         rkWebUtil.elemaker( "br", td );
         if ( this.options.showband ) {

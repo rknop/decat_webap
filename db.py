@@ -167,6 +167,13 @@ class ObjectRB(Base,HasPrimaryID):
 class Object(Base,HasPrimaryID):
     __tablename__ = "objects"
 
+
+class ObjectData(Base,HasPrimaryID):
+    __tablename__ = "objectdatas"
+
+class ObjectData_VersionTag(Base):
+    __tablename__ = "objectdata_versiontag"
+
 class ProcessCheckpoint(Base,HasPrimaryID):
     __tablename__ = "processcheckpoints"
 

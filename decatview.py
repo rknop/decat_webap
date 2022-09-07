@@ -4,6 +4,7 @@ import io
 import pathlib
 import math
 import numbers
+import collections.abc
 import web
 import json
 import traceback
@@ -442,143 +443,294 @@ class ExposureLog(HandlerBase):
 
 
 # ======================================================================
+# ROB.  You need to think about this when it comes to stacks, because
+#  stacks won't have an associate exposure!  THis is an issue for
+#  proposalid.
 
 class Cutouts(HandlerBase):
     def get_cutouts( self, expid=None, candid=None, sort="rb", rbtype=None, offset=None, limit=None,
-                     mingallat=None, maxgallat=None, onlyvetted=False, proposals=None, notvettedby=None ):
-        if not onlyvetted:
-            q = ( self.db.db.query( db.Object, db.Subtraction.ccdnum, db.Subtraction.magzp,
-                                    db.Exposure.filename, db.Exposure.mjd, db.Exposure.proposalid,db.Exposure.filter,
-                                    sa.sql.expression.bindparam ( "nscores", 0 ) )
-                  .join( db.Subtraction, db.Subtraction.id==db.Object.subtraction_id )
-                  .join( db.Exposure, db.Exposure.id==db.Subtraction.exposure_id ) )
-        else:
-            # Just joining should limit this, as it's an inner join
-            q = ( self.db.db.query( db.Object, db.Subtraction.ccdnum, db.Subtraction.magzp,
-                                    db.Exposure.filename, db.Exposure.mjd, db.Exposure.proposalid,db.Exposure.filter,
-                                    sa.func.count(db.ScanScore.id).label('nscores') )
-                  .join( db.Subtraction, db.Subtraction.id==db.Object.subtraction_id )
-                  .join( db.Exposure, db.Exposure.id==db.Subtraction.exposure_id )
-                  .join( db.ScanScore, db.ScanScore.object_id==db.Object.id ) )
-            if notvettedby is not None:
-                selfscore = sa.orm.aliased( db.ScanScore )
-                # This won't omit things already vetted by the user, it just makes sure
-                #  to get things that have been vetted by somebody else
-                q = q.filter( db.ScanScore.username != notvettedby )
-                # Now try to filter out  things vetted by the ser
-                q = q.outerjoin( selfscore, sa.and_( selfscore.username == notvettedby,
-                                                     selfscore.object_id==db.Object.id ) )
-                q = q.filter( selfscore.username == None )
+                     mingallat=None, maxgallat=None, versiontag=1,
+                     onlyvetted=False, proposals=None, notvettedby=None ):
 
-        if expid is not None:
-            q = q.filter( db.Exposure.id == expid )
-        elif candid is not None:
-            q = q.filter( db.Object.candidate_id == candid )
+        try:
+            conn = db.DB._engine.raw_connection()
 
-        if proposals is not None:
-            q = q.filter( db.Exposure.proposalid.in_( proposals ) )
-
-        if mingallat is not None:
-            q = q.filter( sa.or_( db.Exposure.gallat >= mingallat, db.Exposure.gallat <= -mingallat ) )
-        if maxgallat is not None:
-            q = q.filter( sa.and_( db.Exposure.gallat <= maxgallat, db.Exposure.gallat >= -maxgallat ) )
-
-        if onlyvetted:
-            # Throw this in to avoid getting duplicate objects
-            q = q.group_by( db.Object, db.Subtraction.ccdnum, db.Subtraction.magzp, db.Exposure.filename,
-                            db.Exposure.mjd, db.Exposure.proposalid, db.Exposure.filter )
-            
-        if sort == "manyscore_random":
+            subs = {}
+            conds = []
+            q = ( "SELECT od.id,o.id AS object_id,od.ra,od.dec,o.candidate_id,"
+                  "  e.filename,i.basename,i.meanmjd,e.proposalid,"
+                  "  i.magzp,i.ccdnum,i.filter,od.flux,od.fluxerr,od.mag,od.magerr" )
             if onlyvetted:
-                q = q.order_by( sa.desc( sa.text('nscores') ), sa.func.random() )
+                q += ",COUNT(nscores) AS nscores "
             else:
-                q = q.order_by( sa.func.random() )
-            if limit is not None:
-                q = q.limit( limit )
+                q += ",0 AS nscores "
+            q += ( "INTO temp_cutout_objs "
+                   "FROM objectdatas od "
+                   "INNER JOIN objectdata_versiontag v ON od.id=v.objectdata_id AND v.versiontag_id=%(vtag)s "
+                   "INNER JOIN objects o ON od.object_id=o.id "
+                   "INNER JOIN subtractions s ON od.subtraction_id=s.id "
+                   "INNER JOIN images i ON s.image_id=i.id "
+                   "INNER JOIN exposures e ON i.exposure_id=e.id "
+                   )
+            subs['vtag'] = versiontag
+            if onlyvetted:
+                q += "INNER JOIN scanscore ss ON ss.objectdata_id=od.id "
+                if notvettedby is not None:
+                    q += "LEFT JOIN scanscore ss2 ON ss2.objectdata_id=od.id "
+                    conds.append( "ss2.username != %(notvettedby)s" )
+                    subs['notvettedby'] == notvettedby
+                    cons.append( "ss2.username IS NULL" )
 
-        # ****
-        # sys.stderr.write( f"Sending query: {str(q)}\n" )
-        # ****
-        
-        objres = q.all()
-        totnobjs = len(objres)
+            if expid is not None:
+                conds.append( "e.id=%(expid)s" )
+                subs['expid'] = expid
+            elif candid is not None:
+                conds.append( "o.candidate_id=%(candid)s" )
+                subs['candid'] = candid
 
-        objids =[]
-        objs = {}
-        for row in objres:
-            obj, ccdnum, zp, filename, mjd, propid, band, nscores = row
-            objids.append( obj.id )
-            objs[ obj.id ] = {
-                "object_id": obj.id,
-                "ra": obj.ra,
-                "dec": obj.dec,
-                "candid": obj.candidate_id,
-                "filename": filename,
-                "mjd": mjd,
-                "proposalid": propid,
-                "zp": zp,
-                "ccdnum": ccdnum,
-                "filter": band,
-                "flux": obj.flux,
-                "fluxerr": obj.fluxerr,
-                "mag": obj.mag,
-                "magerr": obj.magerr,
-                "nscores": nscores,
-                "rb": None,
-                "sci_jpeg": None,
-                "ref_jpeg": None,
-                "diff_jpeg": None
-            }
+            if proposals is not None:
+                conds.append( "e.proposaid IN %(proposals)s" )
+                if isinstance( proposals, collections.abc.Iterable ) and ( type(proposals) != str ):
+                    proposals = tuple( proposals )
+                else:
+                    proposals = ( proposals, )
+                subs['proposals'] = proposals
 
-        # Get RBs and sort objects
-        if rbtype is not None:
-            q = ( self.db.db.query( db.ObjectRB )
-                  .filter( db.ObjectRB.rbtype_id==rbtype )
-                  .filter( db.ObjectRB.object_id.in_( objids ) ) )
-            res = q.all()
-            for rb in res:
-                objs[ rb.object_id ]['rb'] = rb.rb
-        if sort == "rb":
-            objids.sort( key=lambda i: ( 9999 if objs[i]['rb'] is None else -objs[i]['rb'], i ) )
-        elif sort == "mjd":
-            objids.sort( key=lambda i: objs[i]['mjd'] )
-        elif sort == "manyscore_random":
-            # Already sorted
-            pass
-        else:
-            raise ValueError( f"Unknown sort scheme {sort}" )
+            if mingallat is not None:
+                conds.append( "e.gallat>=%(mingallat)s" )
+                subs['mingallat'] = mingallat
+            if maxgallat is not None:
+                conds.append( "e.gallat<=%(maxgallat)s" )
+                subs['maxgallat'] = maxgallat
 
-        # Trim if requested.  (If random, already trimmed.)
-        start = 0
-        end = totnobjs
-        if sort != "random":
-            if offset is not None:
-                start = min( totnobjs, max( offset, 0 ) )
-            if limit is not None:
-                end = min( totnobjs, start + limit )
-        objids = objids[start:end]
+            if len(conds) > 0:
+                q += "WHERE " + " AND ".join( conds )
 
-        # Get cutouts for trimmed list
-        q = ( self.db.db.query( db.Cutout )
-              .filter( db.Cutout.object_id.in_( objids ) ) )
-        cutouts = q.all()
-        for cutout in cutouts:
-            objs[cutout.object_id]["sci_jpeg"] = base64.b64encode(cutout.sci_jpeg).decode('ascii')
-            objs[cutout.object_id]["ref_jpeg"] = base64.b64encode(cutout.ref_jpeg).decode('ascii')
-            objs[cutout.object_id]["diff_jpeg"] = base64.b64encode(cutout.diff_jpeg).decode('ascii')
+            if onlyvetted:
+                # Avoid duplicates
+                q += ( "GROUP BY od.id,o.id,od.ra,od.dec,o.candidate_id,e.filename,i.basename,i.meanmjd,"
+                       "e.proposalid,i.magzp,i.ccdnum,i.filter,od.flux,od.fluxerr,od.mag,od.magerr " )
 
-        results = { "totnobjs": totnobjs,
-                    "offset": start,
-                    "num": end-start,
-                    "objs": [ objs[i] for i in objids  ] }
-
-        # ****
-        # sys.stderr.write( f"results['objs'][0].keys() = {results['objs'][0].keys()}\n" )
-        # for obj in results['objs']:
-        #     sys.stderr.write( f"Showing cutouts for object {obj['object_id']} ( {obj['nscores']} scores )\n" )
-        # ****
+            if sort == "manyscore_random":
+                if onlyvetted:
+                    q += "ORDER BY nscores DESC,random() "
+                else:
+                    q += "ORDER BY random() "
+                if limit is not None:
+                    q += "LIMIT %(limit)s "
+                    subs['limit'] = limit
+                    
+            cursor = conn.cursor( cursor_factory=psycopg2.extras.DictCursor )
+            cursor.execute( q, subs )
+            cursor.execute( "SELECT COUNT(id) AS n FROM temp_cutout_objs" )
+            rows = cursor.fetchall()
+            totnobjs = rows[0]['n']
             
-        return results
+            # We have the things we want loaded into the temp table temp_cutout_objs
+            # Now get the r/b info and cutouts
+
+            subs = {}
+            q = ( "SELECT t.id,t.object_id,t.ra,t.dec,t.candidate_id AS candid,"
+                  "  t.filename,t.basename,t.meanmjd,t.proposalid,"
+                  "  t.magzp,t.ccdnum,t.filter,t.flux,t.fluxerr,t.mag,t.magerr, "
+                  "  c.sci_jpeg,c.ref_jpeg,c.diff_jpeg," )
+            if ( rbtype is not None ):
+                q += ( "r.rb AS rb "
+                       "FROM temp_cutout_objs t "
+                       "LEFT JOIN objectrbs r ON t.id=r.objectdata_id AND r.rbtype_id=%(rbtype)s " )
+                subs['rbtype'] = rbtype
+            else:
+                q += ( "NULL AS rb "
+                       "FROM temp_cutout_objs " )
+            q += "LEFT JOIN cutouts c ON t.id=c.objectdata_id "
+
+            if ( sort == "rb" ) and ( rbtype is not None ):
+                q += "ORDER BY rb DESC "
+            elif ( sort == "mjd" ):
+                q += "ORDER BY meanmjd "
+            elif ( sort == "manyscore_random" ) or ( sort is None ):
+                # already sorted
+                pass
+            else:
+                raise RuntimeError( f"Unknown sort order {sort}" )
+
+            # If we did manyscore_random, we've already limited
+            if sort != "manyscore_random":
+                if limit is not None:
+                    q += "LIMIT %(limit)s "
+                    subs['limit'] = limit
+                    if offset is not None:
+                        q += "OFFSET %(offset)s "
+                        subs['offset'] = offset
+
+            sys.stderr.write( f"Sending query: {str(q)}\n" )
+            cursor.execute( q, subs )
+            rows = cursor.fetchall()
+            rows = [ dict(row) for row in rows ]
+            cursor.close()
+
+            # Base-64 encode the jpegs
+            for row in rows:
+                for which in ( "sci", "ref", "diff" ):
+                    row[f"{which}_jpeg"] = base64.b64encode( row[f"{which}_jpeg"] ).decode( 'ascii' )
+            
+            return { "totnobjs": totnobjs,
+                     "offset": offset,
+                     "num": len(rows),
+                     "rbtype": rbtype,
+                     "versiontag": versiontag,
+                     "proposals": proposals,
+                     "onlyvetted": onlyvetted,
+                     "notvettedby": notvettedby,
+                     "mingallat": mingallat,
+                     "maxgallat": maxgallat,
+                     "expid": expid,
+                     "candid": candid,
+                     "objs": rows }
+        
+        except Exception as e:
+            return logerr( self.__class__, e )
+        finally:
+            conn.close()
+
+        # if not onlyvetted:
+        #     q = ( self.db.db.query( db.ObjectData, db.Object, db.Image.ccdnum, db.Image.magzp, db.Image.filter,
+        #                             db.Image.meanmjd, db.Image.basename, db.Exposure.filename,
+        #                             db.Exposure.proposalid, sa.sql.expression.bindparam( "nscores", 0 ) )
+        #           .join( db.Subtraction, db.Subtraction.id==db.ObjectData.subtraction_id )
+        #           .join( db.Image, db.Image.id==db.Subtraction.image_id )
+        #           .join( db.Exposure, db.Image.exposure_id==db.Exposure.id )
+        #           .join( db.ObjectData_VersionTag ),filter( db.ObjectData_Versiontag.versiontag_id==versiontag ) )
+        #     # Just joining should limit this, as it's an inner join
+        #     q = ( self.db.db.query( db.ObjectData, db.Object, db.Image.ccdnum, db.Image.magzp, db.Image.filter,
+        #                             db.Image.meanmjd, db.Image.basename, db.Exposure.filename,
+        #                             db.Exposure.proposalid, sa.func.count(db.ScanScore.id).label("nscores") )
+        #           .join( db.Subtraction, db.Subtraction.id==db.ObjectData.subtraction_id )
+        #           .join( db.Image, db.Image.id==db.Subtraction.image_id )
+        #           .join( db.Exposure, db.Image.exposure_id==db.Exposure.id )
+        #           .join( db.ObjectData_VersionTag ).filter( db.ObjectData_Versiontag.versiontag_id==versiontag )
+        #           .join( db.ScanScore, db.ScanScore.objectdata_id==db.ObjectData.id ) )
+        #     if notvettedby is not None:
+        #         selfscore = sa.orm.aliased( db.ScanScore )
+        #         # This won't omit things already vetted by the user, it just makes sure
+        #         #  to get things that have been vetted by somebody else
+        #         q = q.filter( db.ScanScore.username != notvettedby )
+        #         # Now try to filter out  things vetted by the ser
+        #         q = q.outerjoin( selfscore, sa.and_( selfscore.username == notvettedby,
+        #                                              selfscore.object_id==db.Object.id ) )
+        #         q = q.filter( selfscore.username == None )
+
+        # if expid is not None:
+        #     q = q.filter( db.Exposure.id == expid )
+        # elif candid is not None:
+        #     q = q.filter( db.Object.candidate_id == candid )
+
+        # if proposals is not None:
+        #     q = q.filter( db.Exposure.proposalid.in_( proposals ) )
+
+        # if mingallat is not None:
+        #     q = q.filter( sa.or_( db.Exposure.gallat >= mingallat, db.Exposure.gallat <= -mingallat ) )
+        # if maxgallat is not None:
+        #     q = q.filter( sa.and_( db.Exposure.gallat <= maxgallat, db.Exposure.gallat >= -maxgallat ) )
+
+        # if onlyvetted:
+        #     # Throw this in to avoid getting duplicate objects
+        #     q = q.group_by( db.ObjectData, db.Object, db.Image.ccdnum, db.Image.magzp, db.Image.filter,
+        #                     db.Image.meanmjd, db.Image.basename, db.Exposure.filename,
+        #                     db.Exposure.proposalid )
+        # if sort == "manyscore_random":
+        #     if onlyvetted:
+        #         q = q.order_by( sa.desc( sa.text('nscores') ), sa.func.random() )
+        #     else:
+        #         q = q.order_by( sa.func.random() )
+        #     if limit is not None:
+        #         q = q.limit( limit )
+
+        # # ****
+        # # sys.stderr.write( f"Sending query: {str(q)}\n" )
+        # # ****
+        
+        # objres = q.all()
+        # totnobjs = len(objres)
+
+        # objids =[]
+        # objs = {}
+        # for row in objres:
+        #     objdata, obj, ccdnum, zp, band, meanmjd, basename, filename, propid, nscores = row
+        #     objids.append( obj.id )
+        #     objs[ obj.id ] = {
+        #         "object_id": obj.id,
+        #         "objectdata_id": objdata.id,
+        #         "ra": obj.ra,
+        #         "dec": obj.dec,
+        #         "candid": obj.candidate_id,
+        #         "filename": filename,
+        #         "basename": basename,
+        #         "mjd": meanmjd,
+        #         "proposalid": propid,
+        #         "zp": zp,
+        #         "ccdnum": ccdnum,
+        #         "filter": band,
+        #         "flux": objdata.flux,
+        #         "fluxerr": objdata.fluxerr,
+        #         "mag": objdata.mag,
+        #         "magerr": objdata.magerr,
+        #         "nscores": nscores,
+        #         "rb": None,
+        #         "sci_jpeg": None,
+        #         "ref_jpeg": None,
+        #         "diff_jpeg": None
+        #     }
+
+        # # Get RBs and sort objects
+        # if rbtype is not None:
+        #     q = ( self.db.db.query( db.ObjectRB )
+        #           .filter( db.ObjectRB.rbtype_id==rbtype )
+        #           .filter( db.ObjectRB.object_id.in_( objids ) ) )
+        #     res = q.all()
+        #     for rb in res:
+        #         objs[ rb.object_id ]['rb'] = rb.rb
+        # if sort == "rb":
+        #     objids.sort( key=lambda i: ( 9999 if objs[i]['rb'] is None else -objs[i]['rb'], i ) )
+        # elif sort == "mjd":
+        #     objids.sort( key=lambda i: objs[i]['mjd'] )
+        # elif sort == "manyscore_random":
+        #     # Already sorted
+        #     pass
+        # else:
+        #     raise ValueError( f"Unknown sort scheme {sort}" )
+
+        # # Trim if requested.  (If random, already trimmed.)
+        # start = 0
+        # end = totnobjs
+        # if sort != "random":
+        #     if offset is not None:
+        #         start = min( totnobjs, max( offset, 0 ) )
+        #     if limit is not None:
+        #         end = min( totnobjs, start + limit )
+        # objids = objids[start:end]
+
+        # # Get cutouts for trimmed list
+        # q = ( self.db.db.query( db.Cutout )
+        #       .filter( db.Cutout.object_id.in_( objids ) ) )
+        # cutouts = q.all()
+        # for cutout in cutouts:
+        #     objs[cutout.object_id]["sci_jpeg"] = base64.b64encode(cutout.sci_jpeg).decode('ascii')
+        #     objs[cutout.object_id]["ref_jpeg"] = base64.b64encode(cutout.ref_jpeg).decode('ascii')
+        #     objs[cutout.object_id]["diff_jpeg"] = base64.b64encode(cutout.diff_jpeg).decode('ascii')
+
+        # results = { "totnobjs": totnobjs,
+        #             "offset": start,
+        #             "num": end-start,
+        #             "objs": [ objs[i] for i in objids  ] }
+
+        # # ****
+        # # sys.stderr.write( f"results['objs'][0].keys() = {results['objs'][0].keys()}\n" )
+        # # for obj in results['objs']:
+        # #     sys.stderr.write( f"Showing cutouts for object {obj['object_id']} ( {obj['nscores']} scores )\n" )
+        # # ****
+            
+        # return results
         
 
 class CutoutsForExposure(Cutouts):
