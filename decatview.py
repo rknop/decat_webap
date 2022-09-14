@@ -264,13 +264,13 @@ class FindExposures(HandlerBase):
             # Doing this in a separate query so that we will count images
             # that don't have subtractions.  (Could I have done this in one
             # query with a LEFT JOIN on subtractions?)
-            sql = ( "SELECT t.id,COUNT(DISTINCT s.id) AS nsubs,COUNT(c.id) AS ndone,COUNT(c2.id) AS ncopy "
+            sql = ( "SELECT t.id,COUNT(DISTINCT s.id) AS nsubs,COUNT(c.id) AS ndone,COUNT(DISTINCT c2.id) AS ncopy "
                     "FROM temp_find_exposures t "
                     "INNER JOIN images i ON i.exposure_id=t.id "
                     "INNER JOIN subtractions s ON s.image_id=i.id AND s.complete=TRUE "
                     "INNER JOIN subtraction_versiontag v ON v.subtraction_id=s.id AND v.versiontag_id=%(versiontag)s "
                     "LEFT JOIN processcheckpoints c ON c.subtraction_id=s.id AND c.event_id=%(done)s "
-                    "LEFT JOIN processcheckpoints c2 ON c2.subtraction_id=s.id AND c.event_id=%(copy)s "
+                    "LEFT JOIN processcheckpoints c2 ON c2.exposure_id=t.id AND c2.event_id=%(copy)s "
                     "GROUP BY t.id " )
             cursor.execute( sql, { "versiontag": versiontag,
                                    "done": self.checkpointdonevalue,
@@ -469,6 +469,7 @@ class Cutouts(HandlerBase):
                    "INNER JOIN objectdata_versiontag v ON od.id=v.objectdata_id AND v.versiontag_id=%(vtag)s "
                    "INNER JOIN objects o ON od.object_id=o.id "
                    "INNER JOIN subtractions s ON od.subtraction_id=s.id "
+                   "INNER JOIN subtraction_versiontag sv ON s.id=sv.subtraction_id AND sv.versiontag_id=%(vtag)s "
                    "INNER JOIN images i ON s.image_id=i.id "
                    "INNER JOIN exposures e ON i.exposure_id=e.id "
                    )
