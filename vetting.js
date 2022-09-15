@@ -66,22 +66,22 @@ DecatVetting.prototype.renderRow = function( tr, obj ) {
     row.good = rkWebUtil.elemaker( "input", td,
                                    { "attributes":
                                      { "type": "radio",
-                                       "name": "goodbad-"+obj.object_id,
-                                       "id": "good-"+obj.object_id,
+                                       "name": "goodbad-"+obj.objectdata_id,
+                                       "id": "good-"+obj.objectdata_id,
                                        "value": "good"
                                      }
                                    } );
-    rkWebUtil.elemaker( "label", td, { "text": "good", "attributes": { "for": "good-"+obj.object_id } } );
+    rkWebUtil.elemaker( "label", td, { "text": "good", "attributes": { "for": "good-"+obj.objectdata_id } } );
     rkWebUtil.elemaker( "br", td );
     row.bad = rkWebUtil.elemaker( "input", td,
                                   { "attributes":
                                     { "type": "radio",
-                                      "name": "goodbad-"+obj.object_id,
-                                      "id": "bad-"+obj.object_id,
+                                      "name": "goodbad-"+obj.objectdata_id,
+                                      "id": "bad-"+obj.objectdata_id,
                                       "value": "bad" }
                                   }
                                                );
-    rkWebUtil.elemaker( "label", td, { "text": "bad", "attributes": { "for": "bad-"+obj.object_id } } );
+    rkWebUtil.elemaker( "label", td, { "text": "bad", "attributes": { "for": "bad-"+obj.objectdata_id } } );
     rkWebUtil.elemaker( "br", td );
     span = rkWebUtil.elemaker( "span", td, { "text": "Current status: " } );
     row.status = rkWebUtil.elemaker( "span", span );
@@ -100,13 +100,13 @@ DecatVetting.prototype.renderRow = function( tr, obj ) {
         row.status.appendChild( document.createTextNode( "...sending..." ) );
         row.status.classList.remove( ...row.status.classList );
         row.status.classList.add( "warning" );
-        self.sendManyGoodBads( [ obj.object_id ], [ gb ] );
+        self.sendManyGoodBads( [ obj.objectdata_id ], [ gb ] );
     }
 
     row.good.addEventListener( "change", gbfunc ) 
     row.bad.addEventListener( "change", gbfunc );
 
-    this.rows[ obj.object_id ] = row;
+    this.rows[ obj.objectdata_id ] = row;
 }
 
 // **********************************************************************
@@ -151,7 +151,7 @@ DecatVetting.prototype.setRowGoodBadInterface = function( row, goodbad )
 
 DecatVetting.prototype.sendManyGoodBads = function( objids, gbs ) {
     let self = this;
-    this.connector.sendHttpRequest( "setgoodbad", { "object_ids": objids, "goodbads": gbs },
+    this.connector.sendHttpRequest( "setgoodbad", { "objectdata_ids": objids, "goodbads": gbs },
                                function( data ) { self.updateGoodBadStatus( data ) } );
 }
 
@@ -159,7 +159,7 @@ DecatVetting.prototype.sendManyGoodBads = function( objids, gbs ) {
 
 DecatVetting.prototype.updateGoodBadStatus = function( data ) {
     for ( let row of data ) {
-        this.setRowGoodBadInterface( this.rows[row.object_id], row.goodbad );
+        this.setRowGoodBadInterface( this.rows[row.objectdata_id], row.goodbad );
     }
 }
 

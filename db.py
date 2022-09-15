@@ -7,6 +7,7 @@ import uuid
 import sqlalchemy as sa
 import sqlalchemy.orm
 import sqlalchemy.ext.automap
+from sqlalchemy.ext.declarative import declarative_base, declared_attr, DeferredReflection
 import sqlalchemy.inspection
 import sqlalchemy.pool
 from sqlalchemy.dialects.postgresql import UUID as sqlUUID
@@ -17,7 +18,20 @@ if scriptdir not in sys.path:
 
 from decatview_config import DBdata, DBname
 
-Base = sqlalchemy.ext.automap.automap_base()
+# class BaseClass(object):
+#     @declared_attr
+#     def __table__(cls):
+#         global Base
+#         sys.stderr.write( f"Making a Table with engine={DB._engine}" )
+#         return sa.Table( cls.__name__.lower() + "s", Base.metadata, autoload_with=DB._engine )
+
+    # @declared_attr
+    # def __tablename__(cls):
+    #     return cls.__name__.lower() + "s"
+    
+# Base = sqlalchemy.ext.automap.automap_base()
+Base = declarative_base()
+
 
 # ======================================================================
 
@@ -73,15 +87,16 @@ class DB(object):
     
     @classmethod
     def DBinit( cls ):
-        # global dbengine, dbuser, dbpasswd, dbhost, dbdatabase
-        
         if cls._engine is None:
             if not cls._dbparamsset:
                 cls.setdbparams()
             cls._engine = sa.create_engine(f'postgresql://{cls._user}:{cls._password}@{cls._host}:{cls._port}'
                                            f'/{cls._database}', poolclass=sqlalchemy.pool.NullPool )
-            Base.prepare( cls._engine, reflect=True, name_for_collection_relationship=cls.collectionname )
+            # sys.stderr.write( f"engine is {cls._engine}\n" )
+            DeferredReflection.prepare( DB._engine )
+            # sys.stderr.write( "kaglorky\n" )
             cls._sessionfac = sa.orm.sessionmaker( bind=cls._engine, expire_on_commit=False )
+            # sys.stderr.write( f"sessionfac is {cls._sessionfac}\n" )
 
     @staticmethod
     def collectionname( base, local_cls, referred_cls, constraint ):
@@ -95,14 +110,18 @@ class DB(object):
             return DB( db.db )
 
     def __init__( self, db=None ):
+        self.mustclose = False
         if db is None:
             if DB._engine is None:
+                # sys.stderr.write( "Initializing database.\n" )
                 DB.DBinit()
+            # else:
+            #     sys.stderr.write( "Don't need to initialize database\n" )
+            # sys.stderr.write( f"Doing _sessionfac; _sessionfac is {DB._sessionfac}\n" )
             self.db = DB._sessionfac()
             self.mustclose = True
         else:
             self.db = db
-            self.mustclose = False
 
     def __enter__( self ):
         return self
@@ -140,58 +159,60 @@ class HasPrimaryUUID(HasPrimaryID):
 
 # ======================================================================
 
-class CameraChip(Base,HasPrimaryID):
+class CameraChip(DeferredReflection,Base,HasPrimaryID):
     __tablename__ = "camerachips"
 
-class Cameras(Base,HasPrimaryID):
+class Cameras(DeferredReflection,Base,HasPrimaryID):
     __tablename__ = "cameras"
     
-class Candidate(Base,HasPrimaryID):
+class Candidate(DeferredReflection,Base,HasPrimaryID):
     __tablename__ = "candidates"
 
-class CheckpointEventDef(Base,HasPrimaryID):
+class CheckpointEventDef(DeferredReflection,Base,HasPrimaryID):
     __tablename__ = "checkpointeventdefs"
 
-class Cutout(Base,HasPrimaryID):
+class Cutout(DeferredReflection,Base,HasPrimaryID):
     __tablename__ = "cutouts"
 
-class Exposure(Base,HasPrimaryID):
+class Exposure(DeferredReflection,Base,HasPrimaryID):
     __tablename__ = "exposures"
 
-class Image(Base,HasPrimaryID):
+class Image(DeferredReflection,Base,HasPrimaryID):
     __tablename__ = "images"
 
-class ObjectRB(Base,HasPrimaryID):
+class ObjectRB(DeferredReflection,Base,HasPrimaryID):
     __tablename__ = "objectrbs"
 
-class Object(Base,HasPrimaryID):
+class Object(DeferredReflection,Base,HasPrimaryID):
     __tablename__ = "objects"
 
 
-class ObjectData(Base,HasPrimaryID):
+class ObjectData(DeferredReflection,Base,HasPrimaryID):
     __tablename__ = "objectdatas"
 
-class ObjectData_VersionTag(Base):
-    __tablename__ = "objectdata_versiontag"
+# SQLAlchemy craps out because this table doesn't
+#   have a primary key.
+# class ObjectData_VersionTag(DeferredReflection,Base):
+#     __tablename__ = "objectdata_versiontag"
 
-class ProcessCheckpoint(Base,HasPrimaryID):
+class ProcessCheckpoint(DeferredReflection,Base,HasPrimaryID):
     __tablename__ = "processcheckpoints"
 
-class RBType(Base,HasPrimaryID):
+class RBType(DeferredReflection,Base,HasPrimaryID):
     __tablename__ = "rbtypes"
 
-class ScanScore(Base,HasPrimaryID):
+class ScanScore(DeferredReflection,Base,HasPrimaryID):
     __tablename__ = "scanscore"
 
-class Subtraction(Base,HasPrimaryID):
+class Subtraction(DeferredReflection,Base,HasPrimaryID):
     __tablename__ = "subtractions"
 
-class VersionTag(Base,HasPrimaryID):
+class VersionTag(DeferredReflection,Base,HasPrimaryID):
     __tablename__ = "versiontags"
     
 # ======================================================================
 
-class User(Base,HasPrimaryUUID):
+class User(DeferredReflection,Base,HasPrimaryUUID):
     __tablename__ = "webapusers"
 
     @classmethod
@@ -235,7 +256,7 @@ class User(Base,HasPrimaryUUID):
 
 # ======================================================================
 
-class PasswordLink(Base,HasPrimaryUUID):
+class PasswordLink(DeferredReflection,Base,HasPrimaryUUID):
     __tablename__ = "passwordlink"
     userid = sa.Column( sqlUUID(as_uuid=True), default=None )
     

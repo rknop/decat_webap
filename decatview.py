@@ -444,8 +444,10 @@ class ExposureLog(HandlerBase):
 
 # ======================================================================
 # ROB.  You need to think about this when it comes to stacks, because
-#  stacks won't have an associate exposure!  THis is an issue for
+#  stacks won't have an associate exposure!  This is an issue for
 #  proposalid.
+# Think about versiontags.  Right now, if you don't give one, it
+#  defaults to "latest".
 
 class Cutouts(HandlerBase):
     def get_cutouts( self, expid=None, candid=None, sort="rb", rbtype=None, offset=None, limit=None,
@@ -461,10 +463,10 @@ class Cutouts(HandlerBase):
                   "  e.filename,i.basename,i.meanmjd,e.proposalid,"
                   "  i.magzp,i.ccdnum,i.filter,od.flux,od.fluxerr,od.mag,od.magerr" )
             if onlyvetted:
-                q += ",COUNT(nscores) AS nscores "
+                q += ",COUNT(ss.id) AS nscores "
             else:
                 q += ",0 AS nscores "
-            q += ( "INTO temp_cutout_objs "
+            q += ( "INTO TEMP TABLE temp_cutout_objs "
                    "FROM objectdatas od "
                    "INNER JOIN objectdata_versiontag v ON od.id=v.objectdata_id AND v.versiontag_id=%(vtag)s "
                    "INNER JOIN objects o ON od.object_id=o.id "
@@ -477,10 +479,9 @@ class Cutouts(HandlerBase):
             if onlyvetted:
                 q += "INNER JOIN scanscore ss ON ss.objectdata_id=od.id "
                 if notvettedby is not None:
-                    q += "LEFT JOIN scanscore ss2 ON ss2.objectdata_id=od.id "
-                    conds.append( "ss2.username != %(notvettedby)s" )
-                    subs['notvettedby'] == notvettedby
-                    cons.append( "ss2.username IS NULL" )
+                    q += "LEFT JOIN scanscore ss2 ON ss2.objectdata_id=od.id AND ss2.username=%(notvettedby)s"
+                    subs['notvettedby'] = notvettedby
+                    conds.append( "ss2.username IS NULL" )
 
             if expid is not None:
                 conds.append( "e.id=%(expid)s" )
@@ -509,7 +510,7 @@ class Cutouts(HandlerBase):
 
             if onlyvetted:
                 # Avoid duplicates
-                q += ( "GROUP BY od.id,o.id,od.ra,od.dec,o.candidate_id,e.filename,i.basename,i.meanmjd,"
+                q += ( " GROUP BY od.id,o.id,od.ra,od.dec,o.candidate_id,e.filename,i.basename,i.meanmjd,"
                        "e.proposalid,i.magzp,i.ccdnum,i.filter,od.flux,od.fluxerr,od.mag,od.magerr " )
 
             if sort == "manyscore_random":
@@ -520,8 +521,9 @@ class Cutouts(HandlerBase):
                 if limit is not None:
                     q += "LIMIT %(limit)s "
                     subs['limit'] = limit
-                    
+
             cursor = conn.cursor( cursor_factory=psycopg2.extras.DictCursor )
+            sys.stderr.write( f"query={q} with subs={subs}\n" )
             cursor.execute( q, subs )
             cursor.execute( "SELECT COUNT(id) AS n FROM temp_cutout_objs" )
             rows = cursor.fetchall()
@@ -531,7 +533,7 @@ class Cutouts(HandlerBase):
             # Now get the r/b info and cutouts
 
             subs = {}
-            q = ( "SELECT t.id,t.object_id,t.ra,t.dec,t.candidate_id AS candid,"
+            q = ( "SELECT t.id as objectdata_id,t.object_id,t.ra,t.dec,t.candidate_id AS candid,"
                   "  t.filename,t.basename,t.meanmjd,t.proposalid,"
                   "  t.magzp,t.ccdnum,t.filter,t.flux,t.fluxerr,t.mag,t.magerr, "
                   "  c.sci_jpeg,c.ref_jpeg,c.diff_jpeg," )
@@ -542,7 +544,7 @@ class Cutouts(HandlerBase):
                 subs['rbtype'] = rbtype
             else:
                 q += ( "NULL AS rb "
-                       "FROM temp_cutout_objs " )
+                       "FROM temp_cutout_objs t " )
             q += "LEFT JOIN cutouts c ON t.id=c.objectdata_id "
 
             if ( sort == "rb" ) and ( rbtype is not None ):
@@ -588,151 +590,10 @@ class Cutouts(HandlerBase):
                      "expid": expid,
                      "candid": candid,
                      "objs": rows }
-        
         except Exception as e:
-            return logerr( self.__class__, e )
+            raise e
         finally:
             conn.close()
-
-        # if not onlyvetted:
-        #     q = ( self.db.db.query( db.ObjectData, db.Object, db.Image.ccdnum, db.Image.magzp, db.Image.filter,
-        #                             db.Image.meanmjd, db.Image.basename, db.Exposure.filename,
-        #                             db.Exposure.proposalid, sa.sql.expression.bindparam( "nscores", 0 ) )
-        #           .join( db.Subtraction, db.Subtraction.id==db.ObjectData.subtraction_id )
-        #           .join( db.Image, db.Image.id==db.Subtraction.image_id )
-        #           .join( db.Exposure, db.Image.exposure_id==db.Exposure.id )
-        #           .join( db.ObjectData_VersionTag ),filter( db.ObjectData_Versiontag.versiontag_id==versiontag ) )
-        #     # Just joining should limit this, as it's an inner join
-        #     q = ( self.db.db.query( db.ObjectData, db.Object, db.Image.ccdnum, db.Image.magzp, db.Image.filter,
-        #                             db.Image.meanmjd, db.Image.basename, db.Exposure.filename,
-        #                             db.Exposure.proposalid, sa.func.count(db.ScanScore.id).label("nscores") )
-        #           .join( db.Subtraction, db.Subtraction.id==db.ObjectData.subtraction_id )
-        #           .join( db.Image, db.Image.id==db.Subtraction.image_id )
-        #           .join( db.Exposure, db.Image.exposure_id==db.Exposure.id )
-        #           .join( db.ObjectData_VersionTag ).filter( db.ObjectData_Versiontag.versiontag_id==versiontag )
-        #           .join( db.ScanScore, db.ScanScore.objectdata_id==db.ObjectData.id ) )
-        #     if notvettedby is not None:
-        #         selfscore = sa.orm.aliased( db.ScanScore )
-        #         # This won't omit things already vetted by the user, it just makes sure
-        #         #  to get things that have been vetted by somebody else
-        #         q = q.filter( db.ScanScore.username != notvettedby )
-        #         # Now try to filter out  things vetted by the ser
-        #         q = q.outerjoin( selfscore, sa.and_( selfscore.username == notvettedby,
-        #                                              selfscore.object_id==db.Object.id ) )
-        #         q = q.filter( selfscore.username == None )
-
-        # if expid is not None:
-        #     q = q.filter( db.Exposure.id == expid )
-        # elif candid is not None:
-        #     q = q.filter( db.Object.candidate_id == candid )
-
-        # if proposals is not None:
-        #     q = q.filter( db.Exposure.proposalid.in_( proposals ) )
-
-        # if mingallat is not None:
-        #     q = q.filter( sa.or_( db.Exposure.gallat >= mingallat, db.Exposure.gallat <= -mingallat ) )
-        # if maxgallat is not None:
-        #     q = q.filter( sa.and_( db.Exposure.gallat <= maxgallat, db.Exposure.gallat >= -maxgallat ) )
-
-        # if onlyvetted:
-        #     # Throw this in to avoid getting duplicate objects
-        #     q = q.group_by( db.ObjectData, db.Object, db.Image.ccdnum, db.Image.magzp, db.Image.filter,
-        #                     db.Image.meanmjd, db.Image.basename, db.Exposure.filename,
-        #                     db.Exposure.proposalid )
-        # if sort == "manyscore_random":
-        #     if onlyvetted:
-        #         q = q.order_by( sa.desc( sa.text('nscores') ), sa.func.random() )
-        #     else:
-        #         q = q.order_by( sa.func.random() )
-        #     if limit is not None:
-        #         q = q.limit( limit )
-
-        # # ****
-        # # sys.stderr.write( f"Sending query: {str(q)}\n" )
-        # # ****
-        
-        # objres = q.all()
-        # totnobjs = len(objres)
-
-        # objids =[]
-        # objs = {}
-        # for row in objres:
-        #     objdata, obj, ccdnum, zp, band, meanmjd, basename, filename, propid, nscores = row
-        #     objids.append( obj.id )
-        #     objs[ obj.id ] = {
-        #         "object_id": obj.id,
-        #         "objectdata_id": objdata.id,
-        #         "ra": obj.ra,
-        #         "dec": obj.dec,
-        #         "candid": obj.candidate_id,
-        #         "filename": filename,
-        #         "basename": basename,
-        #         "mjd": meanmjd,
-        #         "proposalid": propid,
-        #         "zp": zp,
-        #         "ccdnum": ccdnum,
-        #         "filter": band,
-        #         "flux": objdata.flux,
-        #         "fluxerr": objdata.fluxerr,
-        #         "mag": objdata.mag,
-        #         "magerr": objdata.magerr,
-        #         "nscores": nscores,
-        #         "rb": None,
-        #         "sci_jpeg": None,
-        #         "ref_jpeg": None,
-        #         "diff_jpeg": None
-        #     }
-
-        # # Get RBs and sort objects
-        # if rbtype is not None:
-        #     q = ( self.db.db.query( db.ObjectRB )
-        #           .filter( db.ObjectRB.rbtype_id==rbtype )
-        #           .filter( db.ObjectRB.object_id.in_( objids ) ) )
-        #     res = q.all()
-        #     for rb in res:
-        #         objs[ rb.object_id ]['rb'] = rb.rb
-        # if sort == "rb":
-        #     objids.sort( key=lambda i: ( 9999 if objs[i]['rb'] is None else -objs[i]['rb'], i ) )
-        # elif sort == "mjd":
-        #     objids.sort( key=lambda i: objs[i]['mjd'] )
-        # elif sort == "manyscore_random":
-        #     # Already sorted
-        #     pass
-        # else:
-        #     raise ValueError( f"Unknown sort scheme {sort}" )
-
-        # # Trim if requested.  (If random, already trimmed.)
-        # start = 0
-        # end = totnobjs
-        # if sort != "random":
-        #     if offset is not None:
-        #         start = min( totnobjs, max( offset, 0 ) )
-        #     if limit is not None:
-        #         end = min( totnobjs, start + limit )
-        # objids = objids[start:end]
-
-        # # Get cutouts for trimmed list
-        # q = ( self.db.db.query( db.Cutout )
-        #       .filter( db.Cutout.object_id.in_( objids ) ) )
-        # cutouts = q.all()
-        # for cutout in cutouts:
-        #     objs[cutout.object_id]["sci_jpeg"] = base64.b64encode(cutout.sci_jpeg).decode('ascii')
-        #     objs[cutout.object_id]["ref_jpeg"] = base64.b64encode(cutout.ref_jpeg).decode('ascii')
-        #     objs[cutout.object_id]["diff_jpeg"] = base64.b64encode(cutout.diff_jpeg).decode('ascii')
-
-        # results = { "totnobjs": totnobjs,
-        #             "offset": start,
-        #             "num": end-start,
-        #             "objs": [ objs[i] for i in objids  ] }
-
-        # # ****
-        # # sys.stderr.write( f"results['objs'][0].keys() = {results['objs'][0].keys()}\n" )
-        # # for obj in results['objs']:
-        # #     sys.stderr.write( f"Showing cutouts for object {obj['object_id']} ( {obj['nscores']} scores )\n" )
-        # # ****
-            
-        # return results
-        
 
 class CutoutsForExposure(Cutouts):
     def do_the_things( self, expid ):
@@ -861,7 +722,7 @@ class SearchCandidates(HandlerBase):
             query = ( "SELECT c.id AS id,COUNT(o.id) AS numhighrb,COUNT(DISTINCT e.filter) AS highrbfiltcount,"
                       "  MIN(e.mjd) AS highrbminmjd,MAX(e.mjd) AS highrbmaxmjd,"
                       "  MIN(o.mag) AS highrbminmag,MAX(o.mag) AS highrbmaxmag "
-                      "INTO temp_filtercands "
+                      "INTO TEMP TABLE temp_filtercands "
                       "FROM temp_findcands c "
                       "INNER JOIN objects o ON o.candidate_id=c.id "
                       "INNER JOIN objectrbs r ON o.id=r.object_id "
@@ -888,7 +749,7 @@ class SearchCandidates(HandlerBase):
             query = ( "SELECT c.*,COUNT(o.id) AS numhighsn,COUNT(DISTINCT e.filter) AS filtcount,"
                       " MIN(e.mjd) AS highsnminmjd,MAX(e.mjd) AS highsnmaxmjd,"
                       " MIN(o.mag) AS highsnminmag,MAX(o.mag) AS highsnmaxmag "
-                      "INTO temp_filtercands2 "
+                      "INTO TEMP TABLE temp_filtercands2 "
                       "FROM temp_filtercands c "
                       "INNER JOIN objects o ON o.candidate_id=c.id "
                       "INNER JOIN subtractions s ON o.subtraction_id=s.id "
@@ -913,7 +774,7 @@ class SearchCandidates(HandlerBase):
             sys.stderr.write( f"Object count query done, {res[0]} rows in table.\n" )
 
             # Fourth query: filter this list
-            query = "SELECT * INTO temp_filtercands3 FROM temp_filtercands2 c "
+            query = "SELECT * INTO TEMP TABLE temp_filtercands3 FROM temp_filtercands2 c "
             conds = []
             if data['usediffdays']:
                 conds.append( 'highrbmaxmjd-highrbminmjd>=%(diffdays)s' )
@@ -967,7 +828,7 @@ class SearchCandidates(HandlerBase):
                 
                 if data["useoutsidehighrbdets"]:
                     query = ( "SELECT c.id,COUNT(o.id) AS highrboutside "
-                              "INTO temp_filteroutdate1 "
+                              "INTO TEMP TABLE temp_filteroutdate1 "
                               "FROM temp_filtercands3 c "
                               "INNER JOIN objects o ON c.id=o.candidate_id "
                               "INNER JOIN subtractions s ON o.subtraction_id=s.id "
@@ -980,14 +841,15 @@ class SearchCandidates(HandlerBase):
                         query += " AND (o.flux/o.fluxerr)>%(sncut)s "
                     query += "GROUP BY c.id"
                 else:
-                    query = ( "SELECT c.id,0 AS highrboutside INTO temp_filteroutdate1 FROM temp_filtercands3 c" )
+                    query = ( "SELECT c.id,0 AS highrboutside INTO TEMP TABLE temp_filteroutdate1 "
+                              "FROM temp_filtercands3 c" )
                     
                 cursor = conn.cursor()
                 cursor.execute( query, subs )
 
                 if data["useoutsidedets"]:
                     query = ( "SELECT c.id,COUNT(o.id) AS numoutside "
-                              "INTO temp_filteroutdate2 "
+                              "INTO TEMP TABLE temp_filteroutdate2 "
                               "FROM temp_filteroutdate1 c "
                               "INNER JOIN objects o ON c.id=o.candidate_id "
                               "INNER JOIN subtractions s ON o.subtraction_id=s.id "
@@ -998,13 +860,13 @@ class SearchCandidates(HandlerBase):
                     query += "GROUP BY c.id"
                 else:
                     query = ( "SELECT c.id,c.highrboutside,0 AS numoutside "
-                              "INTO temp_filteroutdate2 FROM temp_filteroutdate1 c" )
+                              "INTO TEMP TABLE temp_filteroutdate2 FROM temp_filteroutdate1 c" )
 
                 cursor = conn.cursor()
                 cursor.execute( query, subs )
 
                 query = ( "SELECT c.* "
-                          "INTO temp_filtercands4 "
+                          "INTO TEMP TABLE temp_filtercands4 "
                           "FROM temp_filtercands3 c "
                           "INNER JOIN temp_filteroutdate2 od ON c.id=od.id " )
                 conds = []
@@ -1089,16 +951,18 @@ class GetObjectsToVet(Cutouts):
             results = self.get_cutouts( sort="manyscore_random", limit=100, mingallat=mingallat, maxgallat=maxgallat,
                                         onlyvetted=onlyvetted, notvettedby=web.ctx.session.username )
             # Get user's current vet status
+            sys.stderr.write( f"Going to do the thing.  results is a {type(results)}.\n" )
+            sys.stderr.write( f"results['objs'] is a {type(results['objs'])}.\n" )
             q = ( self.db.db.query( db.ScanScore )
-                  .filter( db.ScanScore.object_id.in_( [ i["object_id"] for i in results["objs"] ] ) )
+                  .filter( db.ScanScore.objectdata_id.in_( [ i["objectdata_id"] for i in results["objs"] ] ) )
                   .filter( db.ScanScore.username==web.ctx.session.username ) )
             them = q.all()
             score = {}
             for row in them:
-                score[row.object_id] = row.goodbad
+                score[row.id] = row.goodbad
 
             for obj in results["objs"]:
-                obj["goodbad"] = score[obj["object_id"]] if obj["object_id"] in score else "unset"
+                obj["goodbad"] = score[obj["objectdata_id"]] if obj["objectdata_id"] in score else "unset"
             
             return json.dumps( results )
         except Exception as e:
@@ -1118,26 +982,26 @@ class SetGoodBad(Cutouts):
             gbs = {}
             ssids = []
             res = []
-            for oid, gb in zip( data['object_ids'], data['goodbads'] ):
+            for oid, gb in zip( data['objectdata_ids'], data['goodbads'] ):
                 if ( gb != "good" ) and ( gb != "bad" ):
                     # sounds like ValueJudgementError
                     raise ValueError( f'Status {gb} is neither good nor bad' )
                 gbs[oid] = gb
                 ssids.append( f"{username}_{oid}" )
-            mustmakenew = set( data['object_ids'] )
+            mustmakenew = set( data['objectdata_ids'] )
 
             q = self.db.db.query( db.ScanScore ).filter( db.ScanScore.id.in_( ssids ) )
             scanscores = q.all()
             for onescore in scanscores:
-                mustmakenew.remove( onescore.object_id )
-                onescore.goodbad = gbs[ onescore.object_id ]
-                res.append( { 'object_id': onescore.object_id, 'goodbad': gbs[ onescore.object_id ] } )
+                mustmakenew.remove( onescore.objectdata_id )
+                onescore.goodbad = gbs[ onescore.objectdata_id ]
+                res.append( { 'objectdata_id': onescore.objectdata_id, 'goodbad': gbs[ onescore.objectdata_id ] } )
 
             for oid in mustmakenew:
                 ssid = f'{username}_{oid}'
-                newscore = db.ScanScore( id=ssid, object_id=oid, username=username, goodbad=gbs[oid] )
+                newscore = db.ScanScore( id=ssid, objectdata_id=oid, username=username, goodbad=gbs[oid] )
                 self.db.db.add( newscore )
-                res.append( { 'object_id': oid, 'goodbad': gbs[ oid ] } )
+                res.append( { 'objectdata_id': oid, 'goodbad': gbs[ oid ] } )
 
             self.db.db.commit()
             
