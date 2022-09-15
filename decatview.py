@@ -1010,11 +1010,13 @@ class SetGoodBad(Cutouts):
             return logerr( self.__class__, e )
 
 # ======================================================================
+# NOTE ABOUT VETTING : I haven't really thought about how this should
+# interact with versiontags.  Right now, I just ignore the issue, and
+# pretend that all objectdatas are independent.
 
 class GetVetStats(HandlerBase):
     def do_the_things( self ):
-        self.jsontop()
-        return json.dumps( { "error": "GetVetStats needs updating." } )
+        conn = None
         try:
             self.jsontop()
             self.verifyauth()
@@ -1023,48 +1025,49 @@ class GetVetStats(HandlerBase):
                     'ngal': [],
                     'nexgal': []
                     }
-            qbase = self.db.db.query( sa.func.count(db.ScanScore.object_id).label("n") )
-            qbase = qbase.join( db.Object, db.ScanScore.object_id==db.Object.id )
-            qbase = qbase.join( db.Image, db.Object.image_id==db.Subtraction.id )
-            qbase = qbase.join( db.Exposure, db.Subtraction.exposure_id==db.Exposure.id )
-            qbase = qbase.filter( db.ScanScore.username==web.ctx.session.username )
+            conn = db.DB._engine.raw_connection()
+            cursor = conn.cursor( cursor_factory=psycopg2.extras.DictCursor )
 
-            for which in [ 'yougal', 'youexgal' ]:
-                if which == 'yougal':
-                    q = qbase.filter( db.Exposure.gallat < 20 ).filter( db.Exposure.gallat > -20 )
+            for field, cond in zip( [ 'yougal', 'youexgal' ],
+                                    [ 'i.gallat<20. AND i.gallat>-20.', 'i.gallat>=20 OR i.gallat<=-20.' ] ):
+                cursor.execute( f"SELECT COUNT(s.id) AS n FROM scanscore s "
+                                f"INNER JOIN objectdatas od ON s.objectdata_id=od.id "
+                                f"INNER JOIN objects o ON od.object_id=o.id "
+                                f"INNER JOIN images i ON o.image_id=i.id "
+                                f"WHERE s.username=%(username)s "
+                                f"AND ( {cond} ) ",
+                                { "username": web.ctx.session.username } )
+                rows = cursor.fetchall()
+                if len(rows) == 0:
+                    res[field ] = 0
                 else:
-                    q = qbase.filter( sa.or_( db.Exposure.gallat >= 20, db.Exposure.gallat <= -20 ) )
-                sys.stderr.write( f"{which} query: {str(q)}\n" )
-                them = q.all()
-                sys.stderr.write( f"{which} query returned {[ it for it in them]}\n" )
-                if ( len(them) > 1 ):
-                    sys.stderr.write( f"ERROR: got {len(them)} from vet count query!" )
-                if ( len(them) == 0 ):
-                    res[which] = 0
-                else:
-                    res[which] = int( them[0][0] )
+                    res[field] = rows[0]['n']
 
-            qbase = self.db.db.query( db.ScanScore.object_id.label("oid"),
-                                      sa.func.count(db.ScanScore.id).label("nvet") )
-            qbase = qbase.join( db.Object, db.ScanScore.object_id==db.Object.id )
-            qbase = qbase.join( db.Subtraction, db.Object.subtraction_id==db.Subtraction.id )
-            qbase = qbase.join( db.Exposure, db.Subtraction.exposure_id==db.Exposure.id )
+            for field, cond in zip( [ 'ngal', 'nexgal' ],
+                                    [ 'i.gallat<20. AND i.gallat>-20.', 'i.gallat>=20 OR i.gallat<=-20.' ] ):
+                query = ( f"SELECT nvets,COUNT(odid) AS nobjs FROM "
+                          f" ( SELECT ss.objectdata_id AS odid,COUNT(ss.id) AS nvets "
+                          f"   FROM scanscore ss "
+                          f"   INNER JOIN objectdatas od ON ss.objectdata_id=od.id "
+                          f"   INNER JOIN objects o ON o.id=od.object_id "
+                          f"   INNER JOIN images i ON i.id=o.image_id "
+                          f"   WHERE ( {cond} ) "
+                          f"   GROUP BY ss.objectdata_id ) subq "
+                          f" GROUP BY nvets ORDER BY nvets desc " )
+                # sys.stderr.write( f"Executing {query}\n" )
+                cursor.execute( query )
+                rows = cursor.fetchall()
+                # sys.stderr.write( f"Got {len(rows)} results\n" )
+                for row in rows:
+                    res[field].append( [ row['nvets'], row['nobjs'] ] )
 
-            for which in [ 'ngal', 'nexgal' ]:
-                if which == 'ngal':
-                    subq = qbase.filter( db.Exposure.gallat < 20 ).filter( db.Exposure.gallat > -20 )
-                else:
-                    subq = qbase.filter( sa.or_( db.Exposure.gallat >= 20, db.Exposure.gallat <= -20 ) )
-                subq = subq.group_by( db.ScanScore.object_id ).subquery()
-                
-                q = self.db.db.query( subq.c.nvet, sa.func.count(subq.c.oid).label("n") ).group_by( subq.c.nvet )
-                res[which] = [ tuple(row) for row in q.all() ]
-                res[which].sort( key=lambda item: -item[0] )
-                
-            return json.dumps(res )
+            return json.dumps( res )
         except Exception as e:
             return logerr( self.__class__, e )
-
+        finally:
+            if conn is not None:
+                conn.close()
+        
 # ======================================================================
 
 urls = (
