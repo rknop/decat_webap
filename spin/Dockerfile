@@ -1,9 +1,19 @@
-FROM devuan-chimaera-rknop
+FROM rknop/devuan-chimaera-rknop
 
 MAINTAINER Rob Knop <raknop@lbl.gov>
 
+ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get -y upgrade && apt-get -y dist-upgrade
-RUN apt-get install -y apache2 python3 libapache2-mod-wsgi-py3 python3-webpy python3-psycopg2
+RUN apt-get install -y apache2 python3 libapache2-mod-wsgi-py3 \
+  python3-webpy python3-psycopg2 python3-dateutil python3-tz \
+  python3-pil python3-numpy python3-pandas \
+  python3-sqlalchemy python3-pycryptodome \
+  && apt-get clean
+
+# Patch a bug in web.py that's fixed in the github master but not in
+#  devuan chimaera (as of 2021-11-22)
+COPY custom/session.py.patch /tmp
+RUN patch /usr/lib/python3/dist-packages/web/session.py /tmp/session.py.patch
 
 COPY custom/ports.conf /etc/apache2/
 COPY custom/000-default.conf /etc/apache2/sites-available/
