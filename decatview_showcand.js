@@ -128,6 +128,7 @@ ShowCandidate.prototype.actuallyShowTheThings = function( data ) {
             let limits = this.plotltcv( data.objs, band, ShowCandidate.filtercolors[band] );
             console.log( "Got limits: " + limits );
             ymins[band] = limits[2];
+            if ( ymins[band] > 0. ) ymins[band] = 0.;
             ymaxs[band] = limits[3];
             if ( limits[0] < xmin ) xmin = limits[0];
             if ( limits[1] > xmax ) xmax = limits[1];
@@ -140,6 +141,7 @@ ShowCandidate.prototype.actuallyShowTheThings = function( data ) {
             coloroff += 1;
             if ( coloroff >= ShowCandidate.othercolors.length ) coloroff = 0;
             ymins[band] = limits[2];
+            if ( ymins[band] > 0. ) ymins[band] = 0.;
             ymaxs[band] = limits[3];
             if ( limits[0] < xmin ) xmin = limits[0];
             if ( limits[1] > xmax ) xmax = limits[1];

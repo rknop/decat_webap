@@ -3,6 +3,7 @@ import { rkAuth } from "./rkauth.js"
 import { rkWebUtil } from "./rkwebutil.js"
 import { ExposureList } from "./exposurelist.js"
 import { DecatVetting } from "./vetting.js"
+import { SVGPlot } from "./svgplot.js"
 
 // Namespace
 
@@ -187,7 +188,7 @@ decatview.Context.prototype.render = function() {
     // Clean out some things that may have been created by
     // subpages.  (This is ugly.  Refactor so that I dont'
     // have to know here what other functions made.
-    for ( let prop of [ "exposurelister", "candsearchdiv" ] ) {
+    for ( let prop of [ "exposurelister", "candsearchobj" ] ) {
         if ( this.hasOwnProperty( prop ) )
             delete this[prop];
     }
@@ -497,13 +498,23 @@ decatview.Context.prototype.renderCandidateSearch = function( div ) {
     
     h2 = rkWebUtil.elemaker( "h2", div, { "text": "Candidate Search" } );
 
-    rkWebUtil.elemaker( "p", div,
-                        { "text": "Searches for objects using the checked criteria.  " +
-                          "First searches for objects between the " +
-                          "\"Search objects detected\" time limits, using the r/b and SN cuts if selected.  " +
-                          "After that, it looks at found objects in the \"Filter detection counts\" time limits " +
-                          "(for things like counts of objects, date range object was seen, etc.)" } );
-
+    p = rkWebUtil.elemaker( "div", div );
+    p.style.max_width = "80ex";
+    p.innerHTML = `
+<p>Search for objects using the checked criteria.</p>
+<ul style="max-width: 80ex">
+<li><p>First searches for objects between the "Search objects detected"
+    times.  The first four criteria apply to this search.  All objects
+    seen in the date range (if checked) above the S/N cut (with only
+    high r/b objects included if that option is checked) will be
+    found.</p></li>
+<li><p>Filters that search based on the rest of the criteria (using those
+    that are checked.)  That filter is based on data in the "Filter
+    detection counts" range, which can be different from the initial
+    search range.  You can use this to reject candidates that have too
+    many detections outside the filter range, for instance.</p></li>
+</ul>
+`;
     p = rkWebUtil.elemaker( "p", div, { "text": "Use real/bogus type: " } );
     this.rbtypewid_candsearch = rkWebUtil.elemaker( "select", p );
 
@@ -723,47 +734,135 @@ decatview.Context.prototype.lookupCandidate = function() {
     window.open( href, "_self" );
 }
 
-// **********************************************************************
-
 decatview.Context.prototype.searchForCandidates = function() {
-    var self = this;
-    var data = {};
+    var searchdata = {};
 
-    rkWebUtil.wipeDiv( this.maindiv );
-    this.backToHome( this.maindiv );
-    rkWebUtil.elemaker( "h2", this.maindiv, { "text": "Candidate Search" } );
-
-    this.searchinfodiv = rkWebUtil.elemaker( "div", this.maindiv );
-    
-    data.rbtype = this.chosenrbtype_candsearch;
+    this.chosenrbtype_candsearch = this.rbtypewid_candsearch.value;
+    searchdata.rbtype = this.chosenrbtype_candsearch;
+    searchdata.vtag = this.candidatesearch_versiontagwid.value;
     if ( this.limitallproposalsorsome == "all" ) {
-        data.allorsome = "all";
-        rkWebUtil.elemaker( "p", this.searchinfodiv, { "text": "Searching all proposals" } );
+        searchdata.allorsome = "all";
     } else {
-        data.allorsome = "some";
-        data.proposals = this.limitselectedproposals;
-        rkWebUtil.elemaker( "p", this.searchinfodiv, { "text": "Searching proposals: " + this.limitselectedproposals } );
+        searchdata.allorsome = "some";
+        searchdata.proposals = this.limitselectedproposals;
     }
 
-    var ul = rkWebUtil.elemaker( "ul", this.searchinfodiv, );
     for ( let limit in this.limits ) {
-        data["use" + limit] = this.limits[limit].use;
-        data[limit] = this.limits[limit].value;
-        if ( this.limits[limit].use ) {
-            rkWebUtil.elemaker( "li", ul, { "text": "Limit " + limit + " : " + this.limits[limit].value } );
+        searchdata["use" + limit] = this.limits[limit].use;
+        searchdata[limit] = this.limits[limit].value;
+    }
+
+    this.candsearchobj = new decatview.CandSearch();
+    this.candsearchobj.searchForCandidates( searchdata, this.limits, this.maindiv, this );
+}
+
+// **********************************************************************
+// **********************************************************************
+// **********************************************************************
+
+decatview.CandSearch = function() {}
+
+// These variables are redundant with things in decatview_showcand.js.
+// So is a bunch of the code below.
+// Suggests refactoring needed.
+decatview.CandSearch.filtercolors = { 'g': '#008800',
+                                   'r': '#880000',
+                                   'i': '#884400',
+                                   'z': '#444400' };
+decatview.CandSearch.othercolors = [ '#000088', '#880088', '#008888', '#448800' ];
+decatview.CandSearch.filterorder = [ 'g', 'r', 'i', 'z' ];
+
+decatview.CandSearch.prototype.searchForCandidates = function( searchdata, limits, maindiv, parent ) {
+    var self = this;
+    var hbox, subbox, vbox, div, ul, span, li;
+    this.maindiv = maindiv;
+    this.parent = parent;
+    this.divsforltcvs = {};
+    this.plotters = {};
+    this.datasets = {};
+
+    this.rbtype = searchdata.rbtype;
+    
+    rkWebUtil.wipeDiv( this.maindiv );
+    parent.backToHome( this.maindiv );
+    rkWebUtil.elemaker( "h2", this.maindiv, { "text": "Candidate Search" } );
+
+    hbox = rkWebUtil.elemaker( "div", this.maindiv, { "classes": ["hbox"] } );
+    vbox = rkWebUtil.elemaker( "div", hbox, { "classes": ["vbox"] } );
+    
+    this.searchinfodiv = rkWebUtil.elemaker( "div", vbox );
+
+    if ( searchdata.allorsome == "all" ) {
+        rkWebUtil.elemaker( "p", this.searchinfodiv, { "text": "Searching all proposals" } );
+    } else {
+        rkWebUtil.elemaker( "p", this.searchinfodiv, { "text": "Searching proposals: " + searchdata.proposals } );
+    }
+    rkWebUtil.elemaker( "p", this.searchinfodiv, { "text": "r/b type: " + this.rbtype } );
+    
+    ul = rkWebUtil.elemaker( "ul", this.searchinfodiv, );
+    for ( let limit in limits ) {
+        if ( limits[limit].use ) {
+            rkWebUtil.elemaker( "li", ul, { "text": "Limit " + limit + " : " + limits[limit].value } );
         }
     }
     
-    this.candsearchdiv = rkWebUtil.elemaker( "div", this.maindiv );
+    this.candsearchdiv = rkWebUtil.elemaker( "div", vbox );
     rkWebUtil.elemaker( "span", this.candsearchdiv,
                         { "text": "Searching for candidates...", "classes": [ "warning" ] } );
 
-    this.connector.sendHttpRequest( "searchcands", data, function( res ) { self.ingestAndShowCands( res ) } )
+    vbox = rkWebUtil.elemaker( "div", hbox, { "classes": ["vbox", "emmarginleft"] }  );
+    let pointdiv = rkWebUtil.elemaker( "div", vbox, { "classes": ["hbox"] } );
+
+    div = rkWebUtil.elemaker( "div", pointdiv, { "classes": ["oneclipmeta"] } );
+    rkWebUtil.elemaker( "h3", div, { "text": "New" } );
+    div = rkWebUtil.elemaker( "div", div, { "classes": ["oneclip"] } );
+    this.newclip = rkWebUtil.elemaker( "div", div, { "classes": [ "oneclipwrapper" ] } );
+    
+    div = rkWebUtil.elemaker( "div", pointdiv, { "classes": ["oneclipmeta"] } );
+    rkWebUtil.elemaker( "h3", div, { "text": "Ref" } );
+    div = rkWebUtil.elemaker( "div", div, { "classes": ["oneclip"] } );
+    this.refclip = rkWebUtil.elemaker( "div", div, { "classes": [ "oneclipwrapper" ] } );
+    
+    div = rkWebUtil.elemaker( "div", pointdiv, { "classes": ["oneclipmeta"] } );
+    rkWebUtil.elemaker( "h3", div, { "text": "Sub" } );
+    div = rkWebUtil.elemaker( "div", div, { "classes": ["oneclip"] } );
+    this.subclip = rkWebUtil.elemaker( "div", div, { "classes": [ "oneclipwrapper" ] } );
+
+    hbox = rkWebUtil.elemaker( "div", vbox, { "classes": ["hbox"] } );
+    subbox = rkWebUtil.elemaker( "div", hbox );
+    ul = rkWebUtil.elemaker( "ul", subbox );
+    li = rkWebUtil.elemaker( "li", ul, { "text": "rb: " } );
+    this.rbtext = rkWebUtil.elemaker( "span", li );
+    li = rkWebUtil.elemaker( "li", ul, { "text": "Proposal: " } );
+    this.proptext = rkWebUtil.elemaker( "span", li );
+    li = rkWebUtil.elemaker( "li", ul, { "text": "Mag: " } );
+    this.magtext = rkWebUtil.elemaker( "span", li );
+    li = rkWebUtil.elemaker( "li", ul, { "text": "File: " } );
+    this.filetext = rkWebUtil.elemaker( "span", li );
+    subbox = rkWebUtil.elemaker( "div", hbox );
+    ul = rkWebUtil.elemaker( "ul", subbox );
+    li = rkWebUtil.elemaker( "li", ul, { "text": "Band: " } );
+    this.bandtext = rkWebUtil.elemaker( "span", li );
+    li = rkWebUtil.elemaker( "li", ul, { "text": "CCD: " } );
+    this.ccdtext = rkWebUtil.elemaker( "span", li );
+    li = rkWebUtil.elemaker( "li", ul, { "text": "obj id: " } )
+    this.objidtext = rkWebUtil.elemaker( "span", li );
+    li = rkWebUtil.elemaker( "li", ul, { "text": "obj data id: " } )
+    this.objdataidtext = rkWebUtil.elemaker( "span", li );
+    
+    hbox = rkWebUtil.elemaker( "div", vbox, { "classes": ["hbox"] } );
+    this.showcandlink = rkWebUtil.elemaker( "a", vbox, { "text": "Show Candidate in New Tab" } );
+    this.showcandlink.style.display = "none";
+    
+    this.ltcvplotdiv = rkWebUtil.elemaker( "div", vbox, { "classes": ["vbox"] } );
+    
+    parent.connector.sendHttpRequest( "searchcands", searchdata,
+                                      function( res ) { self.ingestAndShowCands( res ) } );
 }
 
 // **********************************************************************
 
-decatview.Context.prototype.ingestAndShowCands = function( data ) {
+decatview.CandSearch.prototype.ingestAndShowCands = function( data ) {
     var p = rkWebUtil.elemaker( "p", this.searchinfodiv );
     p.appendChild( document.createTextNode( "Initially found: " + data['ninitiallyfound'] ) )
     rkWebUtil.elemaker( "br", p );
@@ -813,7 +912,7 @@ decatview.Context.prototype.ingestAndShowCands = function( data ) {
     this.showCands();
 }
 
-decatview.Context.prototype.sortCandsAndShow = function( key, ascending=true ) {
+decatview.CandSearch.prototype.sortCandsAndShow = function( key, ascending=true ) {
     if ( ( this.showcandsortkey == key ) && ( this.showcandsortascending == ascending ) ) return;
     
     if ( ascending ) {
@@ -834,7 +933,7 @@ decatview.Context.prototype.sortCandsAndShow = function( key, ascending=true ) {
     this.showCands();
 }
 
-decatview.Context.prototype.showCands = function() {
+decatview.CandSearch.prototype.showCands = function() {
     var table, th, tr, td, a, href, span;
     var self = this;
     
@@ -898,11 +997,9 @@ decatview.Context.prototype.showCands = function() {
     for ( let row of this.showcandsrows ) {
         tr = rkWebUtil.elemaker( "tr", table );
         td = rkWebUtil.elemaker( "td", tr );
-        href = webapconfig.webapurl + "cand/" + row.id;
-        if ( this.chosenrbtype_candsearch != null ) href += "?rbtype=" + this.chosenrbtype_candsearch;
-        a = rkWebUtil.elemaker( "a", td, { "text": row["id"],
-                                           "classes": [ "link" ],
-                                           "attributes": { "href": href, "target": "_blank" } } );
+        a = rkWebUtil.elemaker( "a", td, { "text": row["id"], "classes": [ "link" ] } );
+        a.addEventListener( "click", function() { self.showLtcv( row["id"] ); } );
+                                
         for ( let prop of [ "numobjs", "numhighrb", "numfilt",
                             "minmjd", "deltamjd", "minmag", "maxmag",
                             "totnobjs", "totdeltamjd", "totminmag", "totmaxmag", "fracin" ] ) {
@@ -927,6 +1024,183 @@ decatview.Context.prototype.showCands = function() {
 
 }
     
+decatview.CandSearch.prototype.showLtcv = function( candid ) {
+    var self = this;
+    var data = {};
+    if ( this.rbtype != null ) data['rbtype'] = this.rbtype;
+
+    this.parent.connector.sendHttpRequest( "cutoutsforcand/" + candid, data,
+                                           function( res ) { self.actuallyShowLtcv( res ) } );
+}
+
+decatview.CandSearch.prototype.actuallyShowLtcv = function( data ) {
+    var self=this;
+
+    this.showcands_ltcvdata = data;
+    
+    rkWebUtil.wipeDiv( this.ltcvplotdiv );
+    rkWebUtil.wipeDiv( this.newclip );
+    rkWebUtil.wipeDiv( this.refclip );
+    rkWebUtil.wipeDiv( this.subclip );
+
+    rkWebUtil.elemaker( "h3", this.ltcvplotdiv, { "text": data.candid } );
+
+    this.showcandlink.style.display = "inline";
+    let href = webapconfig.webapurl + "cand/" + data.candid;
+    if ( this.rbtype != null ) href += "?rbtype=" + this.rbtype;
+    this.showcandlink.setAttribute( "href", href );
+    this.showcandlink.setAttribute( "target", "_blank" );
+    
+    this.bands = new Set();
+    for ( let obj of data.objs ) this.bands.add( obj.filter );
+
+    var didplot = new Set();
+    var coloroff = 0;
+    var ymins = {};
+    var ymaxs = {};
+    var xmin = 1e32;
+    var xmax = -1e32;
+    for ( let band of decatview.CandSearch.filterorder ) {
+        if ( this.bands.has( band ) ) {
+            let limits = this.plotltcv( data.objs, band, decatview.CandSearch.filtercolors[band] );
+            console.log( "Got limits: " + limits );
+            ymins[band] = limits[2];
+            ymaxs[band] = limits[3];
+            if ( limits[0] < xmin ) xmin = limits[0];
+            if ( limits[1] > xmax ) xmax = limits[1];
+            didplot.add( band );
+        }
+    }
+    for ( let band of this.bands ) {
+        if ( ! didplot.has(band) ) {
+            this.plotltcv( data.objs, band, decatview.CandSearch.othercolors[ coloroff ] );
+            coloroff += 1;
+            if ( coloroff >= decatview.CandSearch.othercolors.length ) coloroff = 0;
+            ymins[band] = limits[2];
+            ymaxs[band] = limits[3];
+            if ( limits[0] < xmin ) xmin = limits[0];
+            if ( limits[1] > xmax ) xmax = limits[1];
+        }
+    }
+
+    for ( let band of this.bands ) {
+        this.plotters[band].defaultlimits = [ xmin, xmax, ymins[band], ymaxs[band] ];
+        this.plotters[band].zoomToDefault();
+    }
+        
+}
+
+decatview.CandSearch.prototype.plotltcv = function( objs, band, color ) {
+    var self = this;
+    
+    let x = [];
+    let y = [];
+    let dy = [];
+
+    for ( let obj of objs ) {
+        if ( obj.filter == band ) {
+            x.push( obj.meanmjd );
+            let flux = 10**( (obj.mag - 29.)/-2.5 );
+            let dflux = obj.magerr * Math.log(10)/2.5 * flux;
+            y.push( flux )
+            dy.push( dflux );
+        }
+    }
+    let div = rkWebUtil.elemaker( "div", this.ltcvplotdiv, { "classes": [ "vbox", "ltcvdiv" ] } );
+    this.divsforltcvs[ band ] = div;
+
+    let buttons = [ rkWebUtil.button( div, "Share X Range", function(e) { self.ltcvShareXRange( band ) } ) ];
+    
+    this.plotters[ band ] = new SVGPlot.Plot( { "divid": "svgplotdiv-" + band,
+                                                "svgid": "svgplotsvg-" + band,
+                                                "title": band + "-band",
+                                                "xtitle": "mjd",
+                                                "ytitle": "flux (arb.)",
+                                                "buttons": buttons
+                                              } );
+    div.appendChild( this.plotters[ band ].topdiv );
+    this.datasets[ band ] = new SVGPlot.Dataset( { "name": band,
+                                                   "x": x,
+                                                   "y": y,
+                                                   "dy": dy,
+                                                   "color": color,
+                                                   "linewid": 0 } );
+    this.plotters[ band ].addDataset( this.datasets[ band ] );
+    this.plotters[ band ].addClickListener( function( info ) {
+        self.clickedOnPoint( info, band );
+    } );
+                                            
+    this.plotters[ band ].redraw();
+    return [ this.plotters[band].xmin, this.plotters[band].xmax,
+             this.plotters[band].ymin, this.plotters[band].ymax  ];
+}
+
+// **********************************************************************
+
+decatview.CandSearch.prototype.ltcvShareXRange = function( band ) {
+    let xmin = this.plotters[band].xmin;
+    let xmax = this.plotters[band].xmax;
+    for ( let b of this.bands ) {
+        this.plotters[b].xmin = xmin;
+        this.plotters[b].xmax = xmax;
+    }
+}
+
+// **********************************************************************
+
+decatview.CandSearch.prototype.clickedOnPoint = function( info, band ) {
+    rkWebUtil.wipeDiv( this.newclip );
+    rkWebUtil.wipeDiv( this.refclip );
+    rkWebUtil.wipeDiv( this.subclip );
+    for ( let pltband in this.plotters ) {
+        if ( pltband != band ) {
+            this.plotters[pltband].removehighlight()
+        }
+    }
+    
+    for ( let val of [ 'rbtext', 'proptext', 'magtext', 'filetext',
+                       'bandtext', 'ccdtext', 'objidtext', 'objdataidtext' ] ) {
+        this[val].innerHTML = '';
+    }
+
+    // Try to find the object that corresponds to the click
+    var dex = -1;
+    var clickobj = null;
+    for ( let obj of this.showcands_ltcvdata.objs ) {
+        if ( obj.filter == band ) {
+            dex += 1;
+            if ( dex == info.pointdex ) {
+                clickobj = obj;
+                break;
+            }
+        }
+    }
+    if ( clickobj == null ) {
+        window.alert( "Failed to find cutouts for clicked point; this shouldn't happend." );
+        return;
+    }
+    this.rbtext.innerHTML = clickobj.rb.toFixed(2);
+    this.proptext.innerHTML = clickobj.proposalid;
+    this.magtext.innerHTML = clickobj.mag.toFixed(2) + " ± " + clickobj.magerr.toFixed(2);
+    this.filetext.innerHTML = clickobj.filename;
+    this.bandtext.innerHTML = clickobj.filter;
+    this.ccdtext.innerHTML = clickobj.ccdnum;
+    this.objidtext.innerHTML = clickobj.object_id;
+    this.objdataidtext.innerHTML = clickobj.objectdata_id;
+
+    var divmap = { "sci": this.newclip, "ref": this.refclip, "diff": this.subclip };
+    for ( let img of [ "sci", "ref", "diff" ] ) { 
+        if ( clickobj[img+"_jpeg"] == null ) {
+            rkWebUtil.elemaker( "span", divmap[img], { "text": "cutout missing" } );
+        } else {
+            rkWebUtil.elemaker( "img", divmap[img],
+                                { "attributes": { "src": "data:image/jpeg;base64," + clickobj[img+"_jpeg"],
+                                                  "width": 153,
+                                                  "height": 153,
+                                                  "alt": img } } );
+        }
+    }
+}
 
 // **********************************************************************
 

@@ -624,7 +624,9 @@ class CutoutsForCandidate(Cutouts):
             
 # ======================================================================
 # ROB WORRY ABOUT TIME ZONES
-                
+#
+# TODO : use the "vtag" input from data to limit version tags
+
 class SearchCandidates(HandlerBase):
     def do_the_things( self ):
         try:
@@ -634,7 +636,7 @@ class SearchCandidates(HandlerBase):
             sys.stderr.write( "Starting SearchCandidates\n" )
             self.jsontop()
             data = json.loads( web.data() )
-            # sys.stderr.write( f"Data is: {data}" )
+            sys.stderr.write( f"Data is: {data}" )
             
             subs = {}
 
@@ -646,11 +648,13 @@ class SearchCandidates(HandlerBase):
             
             query = ( "SELECT DISTINCT o.candidate_id AS id "
                       "INTO TEMP TABLE temp_findcands "
-                      "FROM objects o "
-                      "INNER JOIN subtractions s ON o.subtraction_id=s.id "
-                      "INNER JOIN exposures e ON s.exposure_id=e.id " )
+                      "FROM objectdatas od "
+                      "INNER JOIN objects o ON od.object_id=o.id "
+                      "INNER JOIN subtractions s ON od.subtraction_id=s.id "
+                      "INNER JOIN images i ON s.image_id=i.id "
+                      "INNER JOIN exposures e ON i.exposure_id=e.id " )
             if data['useuserbcut']:
-                query += ( "INNER JOIN objectrbs r ON o.id=r.object_id "
+                query += ( "INNER JOIN objectrbs r ON od.id=r.objectdata_id "
                            "INNER JOIN rbtypes t ON r.rbtype_id=t.id " )
             conds = []
             if data['allorsome'] != "all":
@@ -660,7 +664,8 @@ class SearchCandidates(HandlerBase):
                 conds.append( f"e.mjd>=%(startdate)s" )
                 d = util.asDateTime( data['startdate'] )
                 subs['startdate'] = util.mjd( d.year, d.month, d.day, d.hour, d.minute, d.second )
-                sys.stderr.write( f"Got startdate {d} from {data['startdate']}, translated to mjd {subs['startdate']}\n" )
+                sys.stderr.write( f"Got startdate {d} from {data['startdate']}, "
+                                  f"translated to mjd {subs['startdate']}\n" )
             if data['useenddate']:
                 conds.append( f"e.mjd<=%(enddate)s" )
                 d = util.asDateTime( data['enddate'] )
@@ -675,14 +680,14 @@ class SearchCandidates(HandlerBase):
                 subs['gallatmax'] = data['gallatmax']
                 subs['neggallatmax'] = -float( data['gallatmax'] )
             if data['usera']:
-                conds.append( f"q3c_radial_query(o.ra,o.dec,%(ra)s,%(dec)s,%(radius)s)" )
+                conds.append( f"q3c_radial_query(od.ra,od.dec,%(ra)s,%(dec)s,%(radius)s)" )
                 subs['ra'] = data['ra']
                 subs['dec'] = data['dec']
                 subs['radius'] = data['radius']
             if data['useuserbcut']:
                 conds.append( "t.id=%(rbtype)s AND r.rb>=t.rbcut " )
             if data['usesncut']:
-                conds.append( "(o.flux/o.fluxerr)>%(sncut)s " )
+                conds.append( "(od.flux/od.fluxerr)>%(sncut)s " )
             if len( conds ) > 0:
                 query += "WHERE " + " AND ".join( conds )
             else:
@@ -721,19 +726,21 @@ class SearchCandidates(HandlerBase):
 
             query = ( "SELECT c.id AS id,COUNT(o.id) AS numhighrb,COUNT(DISTINCT e.filter) AS highrbfiltcount,"
                       "  MIN(e.mjd) AS highrbminmjd,MAX(e.mjd) AS highrbmaxmjd,"
-                      "  MIN(o.mag) AS highrbminmag,MAX(o.mag) AS highrbmaxmag "
+                      "  MIN(od.mag) AS highrbminmag,MAX(od.mag) AS highrbmaxmag "
                       "INTO TEMP TABLE temp_filtercands "
                       "FROM temp_findcands c "
                       "INNER JOIN objects o ON o.candidate_id=c.id "
-                      "INNER JOIN objectrbs r ON o.id=r.object_id "
+                      "INNER JOIN objectdatas od ON o.id=od.object_id "
+                      "INNER JOIN objectrbs r ON od.id=r.objectdata_id "
                       "INNER JOIN rbtypes t ON r.rbtype_id=t.id "
-                      "INNER JOIN subtractions s ON o.subtraction_id=s.id "
-                      "INNER JOIN exposures e ON s.exposure_id=e.id " )
+                      "INNER JOIN subtractions s ON od.subtraction_id=s.id "
+                      "INNER JOIN images i ON s.image_id=i.id "
+                      "INNER JOIN exposures e ON i.exposure_id=e.id " )
             query += "WHERE t.id=%(rbtype)s AND r.rb>=t.rbcut "
             if len(dateconds) > 0:
                 query += " AND " + ( " AND ".join(dateconds) )
             if data['usesncut']:
-                query += " AND (o.flux/o.fluxerr)>%(sncut)s "
+                query += " AND (od.flux/od.fluxerr)>%(sncut)s "
             query += " GROUP BY c.id"
 
             sys.stderr.write( "Starting high rb count query\n" )
@@ -748,17 +755,19 @@ class SearchCandidates(HandlerBase):
             
             query = ( "SELECT c.*,COUNT(o.id) AS numhighsn,COUNT(DISTINCT e.filter) AS filtcount,"
                       " MIN(e.mjd) AS highsnminmjd,MAX(e.mjd) AS highsnmaxmjd,"
-                      " MIN(o.mag) AS highsnminmag,MAX(o.mag) AS highsnmaxmag "
+                      " MIN(od.mag) AS highsnminmag,MAX(od.mag) AS highsnmaxmag "
                       "INTO TEMP TABLE temp_filtercands2 "
                       "FROM temp_filtercands c "
                       "INNER JOIN objects o ON o.candidate_id=c.id "
-                      "INNER JOIN subtractions s ON o.subtraction_id=s.id "
-                      "INNER JOIN exposures e ON s.exposure_id=e.id " )
+                      "INNER JOIN objectdatas od ON o.id=od.object_id "
+                      "INNER JOIN subtractions s ON od.subtraction_id=s.id "
+                      "INNER JOIN images i ON s.image_id=i.id "
+                      "INNER JOIN exposures e ON i.exposure_id=e.id " )
             conds = []
             if len( dateconds ) > 0:
                 conds.extend( dateconds )
             if data['usesncut']:
-                conds.append( "(o.flux/o.fluxerr)>%(sncut)s" )
+                conds.append( "(od.flux/od.fluxerr)>%(sncut)s" )
             if len( conds ) > 0:
                 query += " WHERE " + ( " AND ".join(conds) )
             query += " GROUP BY c.id"
@@ -831,9 +840,11 @@ class SearchCandidates(HandlerBase):
                               "INTO TEMP TABLE temp_filteroutdate1 "
                               "FROM temp_filtercands3 c "
                               "INNER JOIN objects o ON c.id=o.candidate_id "
-                              "INNER JOIN subtractions s ON o.subtraction_id=s.id "
-                              "INNER JOIN exposures e ON s.exposure_id=e.id "
-                              "INNER JOIN objectrbs r ON o.id=r.object_id "
+                              "INNER JOIN objectdatas od ON o.id=od.object_id "
+                              "INNER JOIN subtractions s ON od.subtraction_id=s.id "
+                              "INNER JOIN images i ON s.image_id=i.id "
+                              "INNER JOIN exposures e ON i.exposure_id=e.id "
+                              "INNER JOIN objectrbs r ON od.id=r.objectdata_id "
                               "INNER JOIN rbtypes t ON r.rbtype_id=t.id "
                               f"WHERE {outdateconds} "
                               "AND t.id=%(rbtype)s AND r.rb>=t.rbcut " )
@@ -845,6 +856,7 @@ class SearchCandidates(HandlerBase):
                               "FROM temp_filtercands3 c" )
                     
                 cursor = conn.cursor()
+                sys.stderr.write( f"Sending query: {cursor.mogrify( query, subs)}\n" )
                 cursor.execute( query, subs )
 
                 if data["useoutsidedets"]:
@@ -852,8 +864,10 @@ class SearchCandidates(HandlerBase):
                               "INTO TEMP TABLE temp_filteroutdate2 "
                               "FROM temp_filteroutdate1 c "
                               "INNER JOIN objects o ON c.id=o.candidate_id "
-                              "INNER JOIN subtractions s ON o.subtraction_id=s.id "
-                              "INNER JOIN exposures e ON s.exposure_id=e.id "
+                              "INNER JOIN objectdatas od ON o.id=od.object_id "
+                              "INNER JOIN subtractions s ON od.subtraction_id=s.id "
+                              "INNER JOIN image si ON s.image_id=i.id "
+                              "INNER JOIN exposures e ON i.exposure_id=e.id "
                               f"WHERE {outdateconds} " )
                     if data['usesncut']:
                         query += " AND (o.flux/o.fluxerr)>%(sncut)s "
@@ -868,13 +882,13 @@ class SearchCandidates(HandlerBase):
                 query = ( "SELECT c.* "
                           "INTO TEMP TABLE temp_filtercands4 "
                           "FROM temp_filtercands3 c "
-                          "INNER JOIN temp_filteroutdate2 od ON c.id=od.id " )
+                          "LEFT JOIN temp_filteroutdate2 od ON c.id=od.id " )
                 conds = []
                 if data["useoutsidehighrbdets"]:
-                    conds.append( "highrboutside<=%(highrboutside)s" )
+                    conds.append( "(highrboutside IS NULL OR highrboutside<=%(highrboutside)s)" )
                     subs['highrboutside'] = data['outsidehighrbdets']
                 if data["useoutsidedets"]:
-                    conds.append( "numoutside<=%(numoutside)s" )
+                    conds.append( "(numoutside IS NULL OR numoutside<=%(numoutside)s)" )
                     subs['numoutside'] = data['outsidedets']
                 query += "WHERE " + ( " AND ".join( conds ) )
 
@@ -894,11 +908,13 @@ class SearchCandidates(HandlerBase):
             sys.stderr.write( "Starting final query to pull data\n" )
             query = ( "SELECT c.*,COUNT(o.id) AS totnobjs, "
                       "  MAX(e.mjd) AS totmaxmjd,MIN(e.mjd) AS totminmjd, "
-                      "  MAX(o.mag) AS totmaxmag,MIN(o.mag) AS totminmag "
+                      "  MAX(od.mag) AS totmaxmag,MIN(od.mag) AS totminmag "
                       "FROM temp_filtercands4 c "
                       "INNER JOIN objects o ON c.id=o.candidate_id "
-                      "INNER JOIN subtractions s ON s.id=o.subtraction_id "
-                      "INNER JOIN exposures e ON e.id=s.exposure_id "
+                      "INNER JOIN objectdatas od ON o.id=od.object_id "
+                      "INNER JOIN subtractions s ON s.id=od.subtraction_id "
+                      "INNER JOIN images i ON s.image_id=i.id "
+                      "INNER JOIN exposures e ON e.id=i.exposure_id "
                       "GROUP BY c.id ORDER BY c.id" )
             cursor = conn.cursor( cursor_factory=psycopg2.extras.DictCursor )
             cursor.execute( query, subs )
@@ -1016,6 +1032,7 @@ class SetGoodBad(Cutouts):
 
 class GetVetStats(HandlerBase):
     def do_the_things( self ):
+        sys.stderr.write( "Starting GetVatStats\n" )
         conn = None
         try:
             self.jsontop()
@@ -1030,14 +1047,17 @@ class GetVetStats(HandlerBase):
 
             for field, cond in zip( [ 'yougal', 'youexgal' ],
                                     [ 'i.gallat<20. AND i.gallat>-20.', 'i.gallat>=20 OR i.gallat<=-20.' ] ):
-                cursor.execute( f"SELECT COUNT(s.id) AS n FROM scanscore s "
+                q = ( f"SELECT COUNT(s.id) AS n FROM scanscore s "
                                 f"INNER JOIN objectdatas od ON s.objectdata_id=od.id "
                                 f"INNER JOIN objects o ON od.object_id=o.id "
                                 f"INNER JOIN images i ON o.image_id=i.id "
                                 f"WHERE s.username=%(username)s "
-                                f"AND ( {cond} ) ",
-                                { "username": web.ctx.session.username } )
+                                f"AND ( {cond} ) " )
+                subs = { "username": web.ctx.session.username }
+                sys.stderr.write( f"Running query: {cursor.mogrify(q,subs)}\n" )
+                cursor.execute( q, subs )
                 rows = cursor.fetchall()
+                sys.stderr.write( f"Got {len(rows)} results\n" )
                 if len(rows) == 0:
                     res[field ] = 0
                 else:
@@ -1054,10 +1074,10 @@ class GetVetStats(HandlerBase):
                           f"   WHERE ( {cond} ) "
                           f"   GROUP BY ss.objectdata_id ) subq "
                           f" GROUP BY nvets ORDER BY nvets desc " )
-                # sys.stderr.write( f"Executing {query}\n" )
+                sys.stderr.write( f"Running query: {query}\n" )
                 cursor.execute( query )
                 rows = cursor.fetchall()
-                # sys.stderr.write( f"Got {len(rows)} results\n" )
+                sys.stderr.write( f"Got {len(rows)} results\n" )
                 for row in rows:
                     res[field].append( [ row['nvets'], row['nobjs'] ] )
 

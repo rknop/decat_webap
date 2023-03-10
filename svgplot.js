@@ -1089,11 +1089,8 @@ SVGPlot.Plot.prototype.click = function( event )
     // let svgx = ( closex - this._minx ) * this.plotwidth / ( this._maxx - this._minx ) + this.leftedge;
     // let svgy = ( this._maxy - closey ) * this.plotheight / (this._maxy - this._miny ) + this.topedge;
     let svgpt = this.dataToSVG( closex, closey );
-    
-    if ( this.highlighter != null ) {
-        this.highlighter.remove();
-        this.highlighter = null;
-    }
+
+    this.removehighlight();
     this.highlighter = this.datasets[minsetdex].highlightSquare( svgpt.x, svgpt.y );
     this.svg.appendChild( this.highlighter );
 
@@ -1105,6 +1102,15 @@ SVGPlot.Plot.prototype.click = function( event )
                     "y": closey } );
     }
 }
+
+// **********************************************************************
+
+SVGPlot.Plot.prototype.removehighlight = function() {
+    if ( this.highlighter != null ) {
+        this.highlighter.remove();
+        this.highlighter = null;
+    }
+}    
 
 // **********************************************************************
 

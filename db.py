@@ -158,6 +158,7 @@ class HasPrimaryUUID(HasPrimaryID):
         return super().get( id, curdb=curdb )
 
 # ======================================================================
+# Gotta keep this synced with db.py in the main lensgrinder code base!
 
 class CameraChip(DeferredReflection,Base,HasPrimaryID):
     __tablename__ = "camerachips"
