@@ -19,7 +19,6 @@ var ExposureList = function( div, startdate, enddate, rbinfo, proplist, mingalla
     this.versiontagdesc = versiontagdesc;
     this.connector = connector;
     this.checkpointdefs = null;
-    this.camerachips = {};
 }
 
 ExposureList.prototype.render = function( rerender=false ) {
@@ -172,9 +171,6 @@ ExposureList.prototype.actuallyShowExposures = function( data ) {
 // **********************************************************************
 
 ExposureList.prototype.showExposureLog = function( exposureid, exposurename ) {
-    // **** WARNING : harcoding DECam here
-    var camid = 1;
-    // ****
     var self = this;
     this.div.style.display = "none";
     rkWebUtil.elemaker( "p", this.topdiv, { "text": "Back to exposure list",
@@ -187,39 +183,32 @@ ExposureList.prototype.showExposureLog = function( exposureid, exposurename ) {
         this.connector.sendHttpRequest( "checkpointdefs", {},
                                         function( data ) {
                                             self.checkpointdefs = data;
-                                            self.okNowShowExposureLog( exposureid, logdiv, camid );
+                                            self.okNowShowExposureLog( exposureid, logdiv );
                                         } );
     }
     else {
-        this.okNowShowExposureLog( exposureid, logdiv, camid );
+        this.okNowShowExposureLog( exposureid, logdiv );
     }
 }
 
-ExposureList.prototype.okNowShowExposureLog = function( exposureid, logdiv, camid ) {
+ExposureList.prototype.okNowShowExposureLog = function( exposureid, logdiv ) {
     var self = this;
-    if ( ! this.camerachips.hasOwnProperty( camid ) ) {
-        this.connector.sendHttpRequest( "getcamerachips/" + camid, {},
-                                        function( data ) {
-                                            self.okNoReallyNowShowExposureLog( exposureid, logdiv, camid,
-                                                                               data["camerachips"] );
-                                        } );
-    }
-    else {
-        this.okNoReallyNowShowExposureLog( exposureid, logdiv, camid, this.camerachips[camid] );
-    }
+    // WARNING : HARDCODING DECAM HERE
+    this.connector.sendHttpRequest( "getcamerainfo/CTIO 4m/DECam", {},
+                                    function( data ) {
+                                        self.okNoReallyNowShowExposureLog( exposureid, logdiv,
+                                                                           data["id"], data["chips"] );
+                                    } );
 }
 
 ExposureList.prototype.okNoReallyNowShowExposureLog = function( exposureid, logdiv, camid, camerachips ) {
     var self = this;
-    this.camerachips[camid] = camerachips;
     this.connector.sendHttpRequest( "exposurelog/" + exposureid, {},
                                     function( data ) {
-                                        self.actuallyShowExposureLog( data, logdiv, camid ) } );
+                                        self.actuallyShowExposureLog( data, logdiv, camid, camerachips ) } );
 }
 
-// ROB!  Built in assumption (from DECam) that CCD number starts at 1
-// ROB!  Should also pull down camera info and get the number of CCDs
-ExposureList.prototype.actuallyShowExposureLog = function( data, logdiv, camid ) {
+ExposureList.prototype.actuallyShowExposureLog = function( data, logdiv, camid, camerachips ) {
     var self = this;
     var errorid=-1, infoid=-1, subid=-1, doneid=-1;
     var p, table, tr;
@@ -258,7 +247,7 @@ ExposureList.prototype.actuallyShowExposureLog = function( data, logdiv, camid )
     hasinfos = Array.from( hasinfos ).sort( (a,b)=>a-b );
     var nosubs = [];
     var noobjs = [];
-    for ( let chip of this.camerachips[camid] ) {
+    for ( let chip of camerachips ) {
         if ( chip.isgood ) {
             if ( !hassubs.has( chip.chipnum ) ) nosubs.push( chip.chipnum );
             if ( !hasobjs.has( chip.chipnum ) ) noobjs.push( chip.chipnum );
@@ -282,7 +271,7 @@ ExposureList.prototype.actuallyShowExposureLog = function( data, logdiv, camid )
     p = rkWebUtil.elemaker( "p", logdiv, { "text": "CCDs with info logged: " } );
     for ( let ccd of hasinfos ) ccdlink( p, ccd );
     p = rkWebUtil.elemaker( "p", logdiv, { "text": "Jump to CCD: " } );
-    for ( let chip of this.camerachips[camid] ) if ( chip.isgood ) ccdlink( p, chip.chipnum );
+    for ( let chip of camerachips ) if ( chip.isgood ) ccdlink( p, chip.chipnum );
 
     rkWebUtil.elemaker( "h3", logdiv, { "text": "Exposure" } )
     table = rkWebUtil.elemaker( "table", logdiv, { "classes": [ "logtable" ] } );
@@ -307,7 +296,7 @@ ExposureList.prototype.actuallyShowExposureLog = function( data, logdiv, camid )
     }
             
     
-    for ( let chip of this.camerachips[camid] ) {
+    for ( let chip of camerachips ) {
         if ( ! chip.isgood ) continue;
         let ccd = chip.chipnum;
 

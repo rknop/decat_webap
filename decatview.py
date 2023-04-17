@@ -131,6 +131,39 @@ class ShowCand(HandlerBase):
 
 # ======================================================================
 
+class GetCameraInfo(HandlerBase):
+    def do_the_things( self, telescope, camera ):
+        try:
+            self.jsontop()
+            cams = ( self.db.db.query( db.Camera )
+                     .filter( db.Camera.telescope==telescope )
+                     .filter( db.Camera.name==camera ) ).all()
+            if len( cams ) == 0:
+                return json.dumps( { "error": f"Unknown camera {camera} (telescope {telescope})" } )
+            cam = cams[0]
+            resp = { "status": "ok",
+                     "id": cam.id,
+                     "nx": cam.nx,
+                     "ny": cam.ny,
+                     "orientation": cam.orientation,
+                     "pixscale": cam.pixscale,
+                     "telescope": cam.telescope,
+                     "name": cam.name,
+                     "chips": [] }
+            # I can't do this becasue I don't have the full db, just a reflection thingy,
+            #  and I have no clue how the reflection thingy will put in relationships
+            # for cc in cam.chips:
+            ccs = self.db.db.query( db.CameraChip ).filter( db.CameraChip.camera_id==cam.id )
+            for cc in ccs:
+                thiscc = { column.name: getattr( cc, column.name ) for column in cc.__table__.columns }
+                resp["chips"].append( thiscc )
+            resp["chips"].sort( key=lambda cc: cc["chipnum"] )
+            return json.dumps( resp )
+        except Exception as e:
+            return logerr( self.__class__, e )
+
+# ======================================================================
+
 class GetCameraChips(HandlerBase):
     def do_the_things( self, camid ):
         try:
@@ -1093,6 +1126,7 @@ class GetVetStats(HandlerBase):
 urls = (
     '/', "FrontPage",
     '/cand/(.+)', "ShowCand",
+    '/getcamerainfo/(.+)/(.+)', "GetCameraInfo",
     '/getcamerachips/(.+)', "GetCameraChips",
     '/getrbtypes', "GetRBTypes",
     '/getversiontags', "GetVersionTags",

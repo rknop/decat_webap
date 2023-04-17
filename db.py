@@ -163,7 +163,7 @@ class HasPrimaryUUID(HasPrimaryID):
 class CameraChip(DeferredReflection,Base,HasPrimaryID):
     __tablename__ = "camerachips"
 
-class Cameras(DeferredReflection,Base,HasPrimaryID):
+class Camera(DeferredReflection,Base,HasPrimaryID):
     __tablename__ = "cameras"
     
 class Candidate(DeferredReflection,Base,HasPrimaryID):
@@ -184,8 +184,8 @@ class Image(DeferredReflection,Base,HasPrimaryID):
 class ObjectRB(DeferredReflection,Base,HasPrimaryID):
     __tablename__ = "objectrbs"
 
-class Object(DeferredReflection,Base,HasPrimaryID):
-    __tablename__ = "objects"
+# class Object(DeferredReflection,Base,HasPrimaryID):
+#     __tablename__ = "objects"
 
 
 class ObjectData(DeferredReflection,Base,HasPrimaryID):
