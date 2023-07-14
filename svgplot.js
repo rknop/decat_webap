@@ -1324,7 +1324,7 @@ SVGPlot.Dataset.markerCode = function( markername, markercolor, markersize, mark
         circle.setAttribute( "cx", 5 );
         circle.setAttribute( "cy", 5 );
         circle.setAttribute( "r", 5 );
-        if ( markername = "dot" ) {
+        if ( markername == "dot" ) {
             circle.setAttribute( "fill", markercolor );
             circle.setAttribute( "stroke", "none" );
         }
