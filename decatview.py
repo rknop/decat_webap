@@ -46,7 +46,7 @@ class HandlerBase:
         if self.db is not None:
             self.db.close()
         self.db = None
-        
+
     def GET( self, *args, **kwargs ):
         self.opendb()
         retval= self.do_the_things( *args, **kwargs )
@@ -62,14 +62,14 @@ class HandlerBase:
     def verifyauth( self ):
         if ( not hasattr( web.ctx.session, "authenticated" ) ) or ( not web.ctx.session.authenticated ):
             raise RuntimeError( "User not authenticated" )
-        
+
     def jsontop( self ):
         web.header('Content-Type', 'application/json')
 
     def jsontop_verifyauth( self ):
         self.jsontop()
         self.verifyauth()
-    
+
     def htmltop( self, title=None, h1=None, statusdiv=False, includejsstart=False,
                  jsstart="decatview_start.js", addjs=[] ):
         web.header('Content-Type', 'text/html; charset="UTF-8"')
@@ -112,7 +112,7 @@ class FrontPage(HandlerBase):
         self.response += "<div id=\"main-div\"></div>\n"
         self.htmlbottom()
         return self.response
-        
+
 
 # ======================================================================
 
@@ -200,7 +200,7 @@ class GetRBTypes(HandlerBase):
                                  "rbtypes": rbtypes } )
         except Exception as e:
             return logerr( self.__class__, e )
-        
+
 
 # ======================================================================
 
@@ -225,7 +225,7 @@ class FindExposures(HandlerBase):
     checkpointerrorvalue = 999
     checkpointdonevalue = 27
     checkpointcopyoutvalue = 28
-    
+
     def do_the_things( self ):
         try:
             conn = db.DB._engine.raw_connection()
@@ -237,7 +237,7 @@ class FindExposures(HandlerBase):
             versiontag = data[ 'versiontagid' ]
 
             sys.stderr.write( "Finding exposures...\n" )
-            
+
             sql = ( "SELECT e.id AS id,e.filename AS filename,e.proposalid AS proposalid,"
                     "e.header->'EXPTIME' AS exptime,e.ra AS ra,e.dec AS dec,e.gallat AS gallat,"
                     "e.gallong AS gallong "
@@ -281,7 +281,7 @@ class FindExposures(HandlerBase):
                 exposures[row['id']]['numerrors'] = 0
 
             sys.stderr.write( "...counting images...\n" )
-            
+
             sql = ( "SELECT t.id,i.filter,COUNT(DISTINCT i.id) AS nimages "
                     "FROM temp_find_exposures t "
                     "INNER JOIN images i ON i.exposure_id=t.id "
@@ -293,7 +293,7 @@ class FindExposures(HandlerBase):
                 exposures[row['id']]['numimages'] = row['nimages']
 
             sys.stderr.write( "...counting subtractions & done...\n" )
-            
+
             # Doing this in a separate query so that we will count images
             # that don't have subtractions.  (Could I have done this in one
             # query with a LEFT JOIN on subtractions?)
@@ -313,7 +313,7 @@ class FindExposures(HandlerBase):
                 exposures[row['id']]['numsubs'] = row['nsubs']
                 exposures[row['id']]['numdone'] = row['ndone']
                 exposures[row['id']]['numcopyout'] = row['ncopy']
-                
+
             sys.stderr.write( "...counting objectdatas...\n" )
 
             # And yet another query so that in the previous query we would
@@ -354,7 +354,35 @@ class FindExposures(HandlerBase):
 
             # ...finally, count errors; do this in three passes for sanity...
             # (I first tried to be all fancy with left joins, but was getting
-            # duplicats, so threw my hands up and said whatever.)
+            # duplicates, so threw my hands up and said whatever.)
+
+            # Later, I think I've figured it out:
+            # SELECT filename, terrors
+            # FROM ( SELECT COALESCE(subqe.filename,subqi.filename,subqs.filename) as filename,
+            #               COALESCE(enerrors,0)+COALESCE(inerrors,0)+COALESCE(snerrors,0) AS terrors
+            #        FROM ( SELECT e.filename,COUNT(p.id) AS enerrors
+            #               FROM exposures e
+            #               INNER JOIN processcheckpoints p
+            #                 ON e.id=p.exposure_id AND p.event_id=999
+            #               GROUP BY e.filename
+            #             ) subqe
+            #        FULL OUTER JOIN ( SELECT e.filename,COUNT(p.id) AS inerrors
+            #                    FROM exposures e
+            #                    INNER JOIN images i ON e.id=i.exposure_id
+            #                    INNER JOIN processcheckpoints p
+            #                      ON p.image_id=i.id AND p.event_id=999
+            #                    GROUP BY e.filename ) subqi
+            #          ON subqe.filename=subqi.filename
+            #        FULL OUTER JOIN ( SELECT e.filename,COUNT(p.id) AS snerrors
+            #                    FROM exposures e
+            #                    INNER JOIN images i ON i.exposure_id=e.id
+            #                    INNER JOIN subtractions s ON i.id=s.image_id
+            #                    INNER JOIN processcheckpoints p
+            #                      ON p.subtraction_id=s.id AND p.event_id=999
+            #                    GROUP BY e.filename ) subqs
+            #          ON subqe.filename=subqs.filename
+            #      ) mastersubq
+            # WHERE ....
 
             sql = ( "SELECT t.id,COUNT(c.id) AS nerr "
                     "FROM temp_find_exposures t "
@@ -450,7 +478,7 @@ class ExposureLog(HandlerBase):
                 return logerr( self.__class__, e )
             finally:
                 conn.close()
-                    
+
 
             # This code is left over from when processcheckpoints only had
             # exposure_id, and the joins weren't as complicated
@@ -561,7 +589,7 @@ class Cutouts(HandlerBase):
             cursor.execute( "SELECT COUNT(id) AS n FROM temp_cutout_objs" )
             rows = cursor.fetchall()
             totnobjs = rows[0]['n']
-            
+
             # We have the things we want loaded into the temp table temp_cutout_objs
             # Now get the r/b info and cutouts
 
@@ -605,11 +633,17 @@ class Cutouts(HandlerBase):
             rows = [ dict(row) for row in rows ]
             cursor.close()
 
+            # AUGH.  JSON makes NaN a pain in the butt
+            for row in rows:
+                for key, val in row.items():
+                    if isinstance( val, numbers.Number ) and math.isnan( val ):
+                        row[key] = None
+
             # Base-64 encode the jpegs
             for row in rows:
                 for which in ( "sci", "ref", "diff" ):
                     row[f"{which}_jpeg"] = base64.b64encode( row[f"{which}_jpeg"] ).decode( 'ascii' )
-            
+
             return { "totnobjs": totnobjs,
                      "offset": offset,
                      "num": len(rows),
@@ -639,7 +673,7 @@ class CutoutsForExposure(Cutouts):
             return json.dumps( self.get_cutouts( expid=expid, sort="rb", rbtype=rbtype, offset=offset, limit=limit ) )
         except Exception as e:
             return logerr( self.__class__, e )
-            
+
 class CutoutsForCandidate(Cutouts):
     def do_the_things( self, candid ):
         try:
@@ -654,7 +688,7 @@ class CutoutsForCandidate(Cutouts):
             return json.dumps( results )
         except Exception as e:
             return logerr( self.__class__, e )
-            
+
 # ======================================================================
 # ROB WORRY ABOUT TIME ZONES
 #
@@ -665,12 +699,12 @@ class SearchCandidates(HandlerBase):
         try:
             nfound = -1
             conn = db.DB._engine.raw_connection()
-            
+
             sys.stderr.write( "Starting SearchCandidates\n" )
             self.jsontop()
             data = json.loads( web.data() )
             sys.stderr.write( f"Data is: {data}" )
-            
+
             subs = {}
 
             # First query : get all candidates that are detected
@@ -678,7 +712,7 @@ class SearchCandidates(HandlerBase):
             #   at least the minimum S/N (if requested), considering
             #   only high-r/b objects (if requested), also using
             #   gallat and ra/dec cuts, and proposal cuts
-            
+
             query = ( "SELECT DISTINCT o.candidate_id AS id "
                       "INTO TEMP TABLE temp_findcands "
                       "FROM objectdatas od "
@@ -727,7 +761,7 @@ class SearchCandidates(HandlerBase):
                 raise RuntimeError( "You just asked *all candidates*.  You do not want to do that." )
             subs['rbtype'] = data['rbtype']
             subs['sncut'] = data['sncut']
-            
+
             sys.stderr.write( f'Starting massive object finding query\n' )
             # sys.stderr.write( f'{str(saq)}\n' )
             # sys.stderr.write( f'subs: {subs}\n' )
@@ -785,7 +819,7 @@ class SearchCandidates(HandlerBase):
             res = cursor.fetchone()
             nhighrb = res[0]
             sys.stderr.write( f"Done with high rb count query, {res[0]} rows in table.\n" )
-            
+
             query = ( "SELECT c.*,COUNT(o.id) AS numhighsn,COUNT(DISTINCT e.filter) AS filtcount,"
                       " MIN(e.mjd) AS highsnminmjd,MAX(e.mjd) AS highsnmaxmjd,"
                       " MIN(od.mag) AS highsnminmag,MAX(od.mag) AS highsnmaxmag "
@@ -848,7 +882,7 @@ class SearchCandidates(HandlerBase):
             res = cursor.fetchone()
             ndatemagrbsnfiltered = res[0]
             sys.stderr.write( f"Filter query done, {res[0]} candidates remain.\n" )
-            
+
             # POSSIBLE fifth and sixth queries.  Reject candidates with too many detections *outside* the filtered
             #   range.
 
@@ -867,7 +901,7 @@ class SearchCandidates(HandlerBase):
                 outdateconds = "(" + ( " OR ".join( outdateconds ) ) + ")"
 
                 sys.stderr.write( "Starting outside-date-range rejection filter\n" )
-                
+
                 if data["useoutsidehighrbdets"]:
                     query = ( "SELECT c.id,COUNT(o.id) AS highrboutside "
                               "INTO TEMP TABLE temp_filteroutdate1 "
@@ -887,7 +921,7 @@ class SearchCandidates(HandlerBase):
                 else:
                     query = ( "SELECT c.id,0 AS highrboutside INTO TEMP TABLE temp_filteroutdate1 "
                               "FROM temp_filtercands3 c" )
-                    
+
                 cursor = conn.cursor()
                 sys.stderr.write( f"Sending query: {cursor.mogrify( query, subs)}\n" )
                 cursor.execute( query, subs )
@@ -935,9 +969,9 @@ class SearchCandidates(HandlerBase):
             else:
                 query = ( "ALTER TABLE temp_filtercands3 RENAME TO temp_filtercands4" )
                 cursor.execute( query )
-                
+
             # Last query: full counts and pull
-            
+
             sys.stderr.write( "Starting final query to pull data\n" )
             query = ( "SELECT c.*,COUNT(o.id) AS totnobjs, "
                       "  MAX(e.mjd) AS totmaxmjd,MIN(e.mjd) AS totminmjd, "
@@ -959,7 +993,7 @@ class SearchCandidates(HandlerBase):
                 for key, val in row.items():
                     if isinstance( val, numbers.Number ) and math.isnan( val ):
                         row[key] = None
-            
+
             nfound = len(rows)
             # with open( "/sessions/test.txt", "w" ) as ofp:
             #     ofp.write( json.dumps( list( rows ) ) )
@@ -976,7 +1010,7 @@ class SearchCandidates(HandlerBase):
         finally:
             conn.close()
             sys.stderr.write( f'All done with candidate finding, for better or worse; nfound={nfound}\n' )
-                
+
 # ======================================================================
 
 class GetObjectsToVet(Cutouts):
@@ -985,7 +1019,7 @@ class GetObjectsToVet(Cutouts):
             self.jsontop()
             if not web.ctx.session.authenticated:
                 raise PermissionError( "Must log in to vet objects" )
-            
+
             data = json.loads( web.data() )
 
             if data[ "galorexgal" ] == "Galactic":
@@ -1012,7 +1046,7 @@ class GetObjectsToVet(Cutouts):
 
             for obj in results["objs"]:
                 obj["goodbad"] = score[obj["objectdata_id"]] if obj["objectdata_id"] in score else "unset"
-            
+
             return json.dumps( results )
         except Exception as e:
             return logerr( self.__class__, e )
@@ -1053,7 +1087,7 @@ class SetGoodBad(Cutouts):
                 res.append( { 'objectdata_id': oid, 'goodbad': gbs[ oid ] } )
 
             self.db.db.commit()
-            
+
             return json.dumps( res )
         except Exception as e:
             return logerr( self.__class__, e )
@@ -1120,7 +1154,7 @@ class GetVetStats(HandlerBase):
         finally:
             if conn is not None:
                 conn.close()
-        
+
 # ======================================================================
 
 urls = (

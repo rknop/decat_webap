@@ -251,6 +251,7 @@ rkWebUtil.Connector.prototype.catchHttpResponse = function( req, handler, errorh
         window.alert( "Error parsing JSON! (" + err + ")" );
         console.trace();
         console.log( req.responseText );
+        return;
     }
     if ( statedata.hasOwnProperty( "error" ) ) {
         if ( errorhandler != null ) {
